@@ -31,7 +31,7 @@ from transformers.models.t5.modeling_t5 import T5Block
 
 import genmo.mochi_preview.dit.joint_model.context_parallel as cp
 import genmo.mochi_preview.vae.cp_conv as cp_conv
-from genmo.mochi_preview.vae.model import Decoder, apply_tiled
+from genmo.mochi_preview.vae.models import Decoder, apply_tiled
 from genmo.lib.progress import get_new_progress_bar, progress_bar
 from genmo.lib.utils import Timer
 
@@ -186,7 +186,6 @@ class DecoderModelFactory(ModelFactory):
             num_res_blocks=[3, 3, 4, 6, 3],
             latent_dim=12,
             has_attention=[False, False, False, False, False],
-            padding_mode="replicate",
             output_norm=False,
             nonlinearity="silu",
             output_nonlinearity="silu",
@@ -481,7 +480,7 @@ def decode_latents_tiled_spatial(
 ):
     decoded = apply_tiled(decoder, z, num_tiles_w, num_tiles_h, overlap, min_block_size)
     assert decoded is not None, f"Failed to decode latents with tiled spatial method"
-    return decoded
+    return decoded_latents_to_frames(decoded)
 
 @contextmanager
 def move_to_device(model: nn.Module, target_device):
