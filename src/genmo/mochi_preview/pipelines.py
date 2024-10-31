@@ -31,10 +31,9 @@ from transformers.models.t5.modeling_t5 import T5Block
 
 import genmo.mochi_preview.dit.joint_model.context_parallel as cp
 import genmo.mochi_preview.vae.cp_conv as cp_conv
-from genmo.mochi_preview.vae.models import Decoder, apply_tiled
+from genmo.mochi_preview.vae.models import Decoder, dit_latents_to_vae_latents, decode_latents_tiled_spatial, decode_latents_tiled_full
 from genmo.lib.progress import get_new_progress_bar, progress_bar
 from genmo.lib.utils import Timer
-
 
 def linear_quadratic_schedule(num_steps, threshold_noise, linear_steps=None):
     if linear_steps is None:
@@ -112,13 +111,13 @@ class T5ModelFactory(ModelFactory):
 
 
 class DitModelFactory(ModelFactory):
-    def __init__(self, *, model_path: str, model_dtype: str, attention_mode: Optional[str] = None):
+    def __init__(self, *, model_path: str, model_dtype: str, vae_stats_path: str, attention_mode: Optional[str] = None):
         if attention_mode is None:
             from genmo.lib.attn_imports import flash_varlen_qkvpacked_attn # type: ignore
 
             attention_mode = "sdpa" if flash_varlen_qkvpacked_attn is None else "flash"
         print(f"Attention mode: {attention_mode}")
-        super().__init__(model_path=model_path, model_dtype=model_dtype, attention_mode=attention_mode)
+        super().__init__(model_path=model_path, model_dtype=model_dtype, vae_stats_path=vae_stats_path, attention_mode=attention_mode)
 
     def get_model(self, *, local_rank, device_id, world_size):
         # TODO(ved): Set flag for torch.compile
@@ -165,12 +164,16 @@ class DitModelFactory(ModelFactory):
             )
         elif isinstance(device_id, int):
             model = model.to(torch.device(f"cuda:{device_id}"))
+
+        model_stats = json.load(open(self.kwargs["vae_stats_path"]))
+        model.register_buffer("vae_mean", torch.tensor(model_stats["mean"], device=device))
+        model.register_buffer("vae_std", torch.tensor(model_stats["std"], device=device))
         return model.eval()
 
 
 class DecoderModelFactory(ModelFactory):
-    def __init__(self, *, model_path: str, model_stats_path: str):
-        super().__init__(model_path=model_path, model_stats_path=model_stats_path)
+    def __init__(self, *, model_path: str):
+        super().__init__(model_path=model_path)
 
     def get_model(self, *, local_rank, device_id, world_size):
         # TODO(ved): Set flag for torch.compile
@@ -196,9 +199,6 @@ class DecoderModelFactory(ModelFactory):
         decoder.load_state_dict(state_dict, strict=True)
         device = torch.device(f"cuda:{device_id}") if isinstance(device_id, int) else "cpu"
         decoder.eval().to(device)
-        vae_stats = json.load(open(self.kwargs["model_stats_path"]))
-        decoder.register_buffer("vae_mean", torch.tensor(vae_stats["mean"], device=device))
-        decoder.register_buffer("vae_std", torch.tensor(vae_stats["std"], device=device))
         return decoder
 
 
@@ -346,6 +346,7 @@ def sample_model(device, dit, conditioning, **args):
         assert out_cond.shape == out_uncond.shape
         return out_uncond + cfg_scale * (out_cond - out_uncond), out_cond
 
+    # Euler sampler w/ customizable sigma schedule & cfg scale
     for i in get_new_progress_bar(range(0, sample_steps), desc="Sampling"):
         sigma = sigma_schedule[i]
         dsigma = sigma - sigma_schedule[i + 1]
@@ -360,8 +361,8 @@ def sample_model(device, dit, conditioning, **args):
         output_cond = output_cond.to(z)
         z = z + dsigma * pred
 
-    return z[:B] if cond_batched else z
-
+    z = z[:B] if cond_batched else z
+    return dit_latents_to_vae_latents(z, decoder.vae_mean, decoder.vae_std)
 
 def decoded_latents_to_frames(samples):
     samples = samples.float()
@@ -379,109 +380,6 @@ def decode_latents(decoder, z):
         samples = decoder(z)
     samples = cp_conv.gather_all_frames(samples)
     return decoded_latents_to_frames(samples)
-
-
-@torch.inference_mode()
-def decode_latents_tiled_full(
-    decoder,
-    z,
-    *,
-    tile_sample_min_height: int = 240,
-    tile_sample_min_width: int = 424,
-    tile_overlap_factor_height: float = 0.1666,
-    tile_overlap_factor_width: float = 0.2,
-    auto_tile_size: bool = True,
-    frame_batch_size: int = 6,
-):
-    B, C, T, H, W = z.shape
-    assert frame_batch_size <= T, f"frame_batch_size must be <= T, got {frame_batch_size} > {T}"
-
-    tile_sample_min_height = tile_sample_min_height if not auto_tile_size else H // 2 * 8
-    tile_sample_min_width = tile_sample_min_width if not auto_tile_size else W // 2 * 8
-
-    tile_latent_min_height = int(tile_sample_min_height / 8)
-    tile_latent_min_width = int(tile_sample_min_width / 8)
-
-    def blend_v(a: torch.Tensor, b: torch.Tensor, blend_extent: int) -> torch.Tensor:
-        blend_extent = min(a.shape[3], b.shape[3], blend_extent)
-        for y in range(blend_extent):
-            b[:, :, :, y, :] = a[:, :, :, -blend_extent + y, :] * (1 - y / blend_extent) + b[:, :, :, y, :] * (
-                y / blend_extent
-            )
-        return b
-
-    def blend_h(a: torch.Tensor, b: torch.Tensor, blend_extent: int) -> torch.Tensor:
-        blend_extent = min(a.shape[4], b.shape[4], blend_extent)
-        for x in range(blend_extent):
-            b[:, :, :, :, x] = a[:, :, :, :, -blend_extent + x] * (1 - x / blend_extent) + b[:, :, :, :, x] * (
-                x / blend_extent
-            )
-        return b
-
-    overlap_height = int(tile_latent_min_height * (1 - tile_overlap_factor_height))
-    overlap_width = int(tile_latent_min_width * (1 - tile_overlap_factor_width))
-    blend_extent_height = int(tile_sample_min_height * tile_overlap_factor_height)
-    blend_extent_width = int(tile_sample_min_width * tile_overlap_factor_width)
-    row_limit_height = tile_sample_min_height - blend_extent_height
-    row_limit_width = tile_sample_min_width - blend_extent_width
-
-    # Split z into overlapping tiles and decode them separately.
-    # The tiles have an overlap to avoid seams between tiles.
-    pbar = get_new_progress_bar(
-        desc="Decoding latent tiles",
-        total=len(range(0, H, overlap_height)) * len(range(0, W, overlap_width)) * len(range(T // frame_batch_size)),
-    )
-    rows = []
-    for i in range(0, H, overlap_height):
-        row = []
-        for j in range(0, W, overlap_width):
-            temporal = []
-            for k in range(T // frame_batch_size):
-                remaining_frames = T % frame_batch_size
-                start_frame = frame_batch_size * k + (0 if k == 0 else remaining_frames)
-                end_frame = frame_batch_size * (k + 1) + remaining_frames
-                tile = z[
-                    :,
-                    :,
-                    start_frame:end_frame,
-                    i : i + tile_latent_min_height,
-                    j : j + tile_latent_min_width,
-                ]
-                tile = decoder(tile)
-                temporal.append(tile)
-                pbar.update(1)
-            row.append(torch.cat(temporal, dim=2))
-        rows.append(row)
-
-    result_rows = []
-    for i, row in enumerate(rows):
-        result_row = []
-        for j, tile in enumerate(row):
-            # blend the above tile and the left tile
-            # to the current tile and add the current tile to the result row
-            if i > 0:
-                tile = blend_v(rows[i - 1][j], tile, blend_extent_height)
-            if j > 0:
-                tile = blend_h(row[j - 1], tile, blend_extent_width)
-            result_row.append(tile[:, :, :, :row_limit_height, :row_limit_width])
-        result_rows.append(torch.cat(result_row, dim=4))
-
-    return decoded_latents_to_frames(torch.cat(result_rows, dim=3))
-
-@torch.inference_mode()
-def decode_latents_tiled_spatial(
-    decoder,
-    z,
-    *,
-    num_tiles_w: int,
-    num_tiles_h: int,
-    overlap: int = 0,  # Number of pixel of overlap between adjacent tiles.
-    # Use a factor of 2 times the latent downsample factor.
-    min_block_size: int = 1,  # Minimum number of pixels in each dimension when subdividing.
-):
-    decoded = apply_tiled(decoder, z, num_tiles_w, num_tiles_h, overlap, min_block_size)
-    assert decoded is not None, f"Failed to decode latents with tiled spatial method"
-    return decoded_latents_to_frames(decoded)
 
 @contextmanager
 def move_to_device(model: nn.Module, target_device):
