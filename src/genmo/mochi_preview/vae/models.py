@@ -244,6 +244,7 @@ class ResBlock(nn.Module):
         attn_block: Optional[nn.Module] = None,
         causal: bool = True,
         prune_bottleneck: bool = False,
+        padding_mode: str,
         bias: bool = True
     ):
         super().__init__()
@@ -258,7 +259,7 @@ class ResBlock(nn.Module):
                 out_channels=channels // 2 if prune_bottleneck else channels,
                 kernel_size=(3, 3, 3),
                 stride=(1, 1, 1),
-                padding_mode="replicate" if not prune_bottleneck else "zeros",
+                padding_mode=padding_mode,
                 bias=bias,
                 causal=causal,
             ),
@@ -269,7 +270,7 @@ class ResBlock(nn.Module):
                 out_channels=channels,
                 kernel_size=(3, 3, 3),
                 stride=(1, 1, 1),
-                padding_mode="replicate" if not prune_bottleneck else "zeros",
+                padding_mode=padding_mode,
                 bias=bias,
                 causal=causal,
             ),
@@ -533,12 +534,13 @@ class Decoder(nn.Module):
         assert len(num_res_blocks) == self.num_up_blocks + 2
 
         blocks = []
+        new_block_fn = partial(block_fn, padding_mode='replicate')
 
         first_block = [nn.Conv3d(latent_dim, ch[-1], kernel_size=(1, 1, 1))]  # Input layer.
         # First set of blocks preserve channel count.
         for _ in range(num_res_blocks[-1]):
             first_block.append(
-                block_fn(
+                new_block_fn(
                     ch[-1],
                     has_attention=has_attention[-1],
                     causal=causal,
@@ -561,6 +563,7 @@ class Decoder(nn.Module):
                 temporal_expansion=temporal_expansions[-i - 1],
                 spatial_expansion=spatial_expansions[-i - 1],
                 causal=causal,
+                padding_mode='replicate',
                 **block_kwargs,
             )
             blocks.append(block)
@@ -570,7 +573,7 @@ class Decoder(nn.Module):
         # Last block. Preserve channel count.
         last_block = []
         for _ in range(num_res_blocks[0]):
-            last_block.append(block_fn(ch[0], has_attention=has_attention[0], causal=causal, **block_kwargs))
+            last_block.append(new_block_fn(ch[0], has_attention=has_attention[0], causal=causal, **block_kwargs))
         blocks.append(nn.Sequential(*last_block))
 
         self.blocks = nn.ModuleList(blocks)
@@ -759,8 +762,6 @@ def apply_tiled(
     raise ValueError(f"Invalid num_tiles_w={num_tiles_w} and num_tiles_h={num_tiles_h}")
 
 
-
-## Encoder (Distilled)
 class DownsampleBlock(nn.Module):
     def __init__(
         self,
@@ -785,9 +786,6 @@ class DownsampleBlock(nn.Module):
         super().__init__()
         layers = []
 
-        # Change the channel count in the strided convolution.
-        # This lets the ResBlock have uniform channel count,
-        # as in ConvNeXt.
         assert in_channels != out_channels
         layers.append(
             ContextParallelConv3d(
@@ -795,7 +793,8 @@ class DownsampleBlock(nn.Module):
                 out_channels=out_channels,
                 kernel_size=(temporal_reduction, spatial_reduction, spatial_reduction),
                 stride=(temporal_reduction, spatial_reduction, spatial_reduction),
-                padding_mode="replicate",
+                # First layer in each block always uses replicate padding
+                padding_mode='replicate',
                 bias=block_kwargs['bias'],
             )
         )
@@ -823,7 +822,9 @@ class Encoder(nn.Module):
         prune_bottlenecks: List[bool],
         has_attentions: List[bool],
         affine: bool = True,
-        bias: bool = True
+        bias: bool = True,
+        input_is_conv_1x1: bool = False,
+        padding_mode: str,
     ):
         super().__init__()
         self.temporal_reductions = temporal_reductions
@@ -837,12 +838,11 @@ class Encoder(nn.Module):
         num_down_blocks = len(ch) - 1
         assert len(num_res_blocks) == num_down_blocks + 2
 
-        layers = [nn.Conv3d(in_channels, ch[0], kernel_size=(1, 1, 1), bias=True)]
-        # layers = [Conv1x1(in_channels, ch[0])]
+        layers = [nn.Conv3d(in_channels, ch[0], kernel_size=(1, 1, 1), bias=True)] if not input_is_conv_1x1 else [Conv1x1(in_channels, ch[0])]
 
         assert len(prune_bottlenecks) == num_down_blocks + 2
         assert len(has_attentions) == num_down_blocks + 2
-        block = partial(block_fn, affine=False, bias=False)
+        block = partial(block_fn, padding_mode=padding_mode, affine=affine, bias=bias)
 
         for _ in range(num_res_blocks[0]):
             layers.append(block(ch[0], has_attention=has_attentions[0], prune_bottleneck=prune_bottlenecks[0]))
@@ -859,7 +859,8 @@ class Encoder(nn.Module):
                 prune_bottleneck=prune_bottlenecks[i],
                 has_attention=has_attentions[i],
                 affine=affine,
-                bias=bias
+                bias=bias,
+                padding_mode=padding_mode
             )
 
             layers.append(layer)
@@ -872,7 +873,7 @@ class Encoder(nn.Module):
 
         # Output layers.
         self.output_norm = norm_fn(ch[-1])
-        self.output_proj = Conv1x1(ch[-1], 2 * latent_dim, bias=bias)
+        self.output_proj = Conv1x1(ch[-1], 2 * latent_dim, bias=False)
 
     @property
     def temporal_downsample(self):

@@ -40,8 +40,8 @@ def load_model():
             text_encoder_factory=T5ModelFactory(),
             dit_factory=DitModelFactory(model_path=f"{MOCHI_DIR}/dit.safetensors", model_dtype="bf16"),
             decoder_factory=DecoderModelFactory(
-                model_path=f"{MOCHI_DIR}/vae.safetensors",
-                model_stats_path=f"{MOCHI_DIR}/vae_stats.json",
+                model_path=f"{MOCHI_DIR}/decoder.safetensors",
+                model_stats_path=f"{MOCHI_DIR}/decoder_stats.json",
             ),
         )
         if num_gpus > 1:

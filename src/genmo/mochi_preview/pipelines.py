@@ -365,6 +365,7 @@ def sample_model(device, dit, conditioning, **args):
 
 def decoded_latents_to_frames(samples):
     samples = samples.float()
+    samples.clamp_(-1, 1)
     samples = (samples + 1.0) / 2.0
     samples.clamp_(0.0, 1.0)
     frames = rearrange(samples, "b c t h w -> b t h w c")

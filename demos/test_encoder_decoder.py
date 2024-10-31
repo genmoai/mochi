@@ -1,3 +1,4 @@
+import time
 import click
 import torch
 import subprocess
@@ -10,7 +11,8 @@ from genmo.mochi_preview.vae.models import Encoder, Decoder, add_fourier_feature
 @click.command()
 @click.argument('mochi_dir', type=str)
 @click.argument('video_path', type=click.Path(exists=True))
-def reconstruct(mochi_dir, video_path):
+@click.argument('model_size', type=str, default="small")
+def reconstruct(mochi_dir, video_path, model_size):
     def load_video(video_path: str, num_frames: int, fps: float, width: int, height: int):
         """Load video using ffmpeg with basic resizing."""
         ffmpeg_command = [
@@ -63,9 +65,23 @@ def reconstruct(mochi_dir, video_path):
         local_rank=0
     )
 
+    config = dict(
+        prune_bottlenecks=[True, True, True, False, False],
+        has_attentions=[False, False, False, False, False],
+        affine=False,
+        bias=False,
+        padding_mode="zeros"
+    ) if model_size == "small" else dict(
+        prune_bottlenecks=[False, False, False, False, False],
+        has_attentions=[False, True, True, True, True],
+        affine=True,
+        bias=True,
+        input_is_conv_1x1=True,
+        padding_mode="replicate"
+    )
 
     # Create VAE encoder
-    distilled_encoder = Encoder(
+    encoder = Encoder(
         in_channels=15,
         base_channels=64,
         channel_multipliers=[1, 2, 4, 6],
@@ -73,23 +89,12 @@ def reconstruct(mochi_dir, video_path):
         latent_dim=12,
         temporal_reductions=[1, 2, 3],
         spatial_reductions=[2, 2, 2],
-
-        # distilled configuration ...
-        prune_bottlenecks=[True, True, True, False, False],
-        has_attentions=[False, False, False, False, False],
-        affine=False,
-        bias=False
-
-        # undistilled args ...
-        # prune_bottlenecks=[False, False, False, False, False],
-        # has_attentions=[False, True, True, True, True],
-        # affine=True,
-        # bias=True
+        **config,
     )
     device = torch.device("cuda:0")
-    distilled_encoder = distilled_encoder.to(device, memory_format=torch.channels_last_3d)
-    distilled_encoder.load_state_dict(load_file(f"{mochi_dir}/encoder.distilled.safetensors"))
-    distilled_encoder.eval()
+    encoder = encoder.to(device, memory_format=torch.channels_last_3d)
+    encoder.load_state_dict(load_file(f"{mochi_dir}/encoder.{model_size}.safetensors"))
+    encoder.eval()
 
     # get fps and numframes in video
     import cv2
@@ -108,13 +113,20 @@ def reconstruct(mochi_dir, video_path):
     video = video.float() / 127.5 - 1.0
     video = video.to(device)
     video = add_fourier_features(video)
+    torch.cuda.synchronize()
 
     # Encode video to latent
     with torch.inference_mode():
         with torch.autocast("cuda", dtype=torch.bfloat16):
-            ldist = distilled_encoder(video)
+            t0 = time.time()
+            ldist = encoder(video)
+            torch.cuda.synchronize()
+            print(f"Time to encode: {time.time() - t0:.2f}s")
+            t0 = time.time()
             frames = decode_latents_tiled_spatial(decoder, ldist.sample(), num_tiles_w=2, num_tiles_h=2)
-    save_video(frames.cpu().numpy()[0], "reconstructed.mp4", fps=fps)
+            torch.cuda.synchronize()
+            print(f"Time to decode: {time.time() - t0:.2f}s")
+    save_video(frames.cpu().numpy()[0], f"{video_path}.{model_size}.recon.mp4", fps=fps)
 
 if __name__ == "__main__":
     reconstruct()
