@@ -114,7 +114,7 @@ class ContextParallelConv3d(SafeConv3d):
         stride = cast_tuple(stride, 3)
         height_pad = (kernel_size[1] - 1) // 2
         width_pad = (kernel_size[2] - 1) // 2
-
+        
         super().__init__(
             in_channels=in_channels,
             out_channels=out_channels,
@@ -244,6 +244,7 @@ class ResBlock(nn.Module):
         attn_block: Optional[nn.Module] = None,
         causal: bool = True,
         prune_bottleneck: bool = False,
+        bias: bool = True
     ):
         super().__init__()
         self.channels = channels
@@ -258,7 +259,7 @@ class ResBlock(nn.Module):
                 kernel_size=(3, 3, 3),
                 stride=(1, 1, 1),
                 padding_mode="replicate" if not prune_bottleneck else "zeros",
-                bias=not prune_bottleneck,
+                bias=bias,
                 causal=causal,
             ),
             norm_fn(channels, affine=affine),
@@ -269,7 +270,7 @@ class ResBlock(nn.Module):
                 kernel_size=(3, 3, 3),
                 stride=(1, 1, 1),
                 padding_mode="replicate" if not prune_bottleneck else "zeros",
-                bias=not prune_bottleneck,
+                bias=bias,
                 causal=causal,
             ),
         )
@@ -449,9 +450,9 @@ class CausalUpsampleBlock(nn.Module):
         return x
 
 
-def block_fn(channels, *, has_attention: bool = False, **block_kwargs):
+def block_fn(channels, *, affine: bool = True, has_attention: bool = False, **block_kwargs):
     attn_block = AttentionBlock(channels) if has_attention else None
-    return ResBlock(channels, affine=True, attn_block=attn_block, **block_kwargs)
+    return ResBlock(channels, affine=affine, attn_block=attn_block, **block_kwargs)
 
 
 def add_fourier_features(inputs: torch.Tensor, start=6, stop=8, step=1):
@@ -795,7 +796,7 @@ class DownsampleBlock(nn.Module):
                 kernel_size=(temporal_reduction, spatial_reduction, spatial_reduction),
                 stride=(temporal_reduction, spatial_reduction, spatial_reduction),
                 padding_mode="replicate",
-                bias=True,
+                bias=block_kwargs['bias'],
             )
         )
 
@@ -818,9 +819,11 @@ class Encoder(nn.Module):
         latent_dim: int,
         temporal_reductions: List[int],
         spatial_reductions: List[int],
-        # distillation-specific arguments
+        # used to toggle between distilled and undistilled version
         prune_bottlenecks: List[bool],
         has_attentions: List[bool],
+        affine: bool = True,
+        bias: bool = True
     ):
         super().__init__()
         self.temporal_reductions = temporal_reductions
@@ -834,19 +837,17 @@ class Encoder(nn.Module):
         num_down_blocks = len(ch) - 1
         assert len(num_res_blocks) == num_down_blocks + 2
 
-        # layers = [nn.Conv3d(in_channels, ch[0], kernel_size=(1, 1, 1), bias=True)]
-        layers = [Conv1x1(in_channels, ch[0])]
+        layers = [nn.Conv3d(in_channels, ch[0], kernel_size=(1, 1, 1), bias=True)]
+        # layers = [Conv1x1(in_channels, ch[0])]
 
         assert len(prune_bottlenecks) == num_down_blocks + 2
         assert len(has_attentions) == num_down_blocks + 2
-        block = block_fn
+        block = partial(block_fn, affine=False, bias=False)
 
         for _ in range(num_res_blocks[0]):
             layers.append(block(ch[0], has_attention=has_attentions[0], prune_bottleneck=prune_bottlenecks[0]))
         prune_bottlenecks = prune_bottlenecks[1:]
         has_attentions = has_attentions[1:]
-
-        # assert conv_kwargs.get("conv_type", "TCausalConv3d") == "ContextParallelConv3d"
 
         assert len(temporal_reductions) == len(spatial_reductions) == len(ch) - 1
         for i in range(num_down_blocks):
@@ -857,6 +858,8 @@ class Encoder(nn.Module):
                 spatial_reduction=spatial_reductions[i],
                 prune_bottleneck=prune_bottlenecks[i],
                 has_attention=has_attentions[i],
+                affine=affine,
+                bias=bias
             )
 
             layers.append(layer)
@@ -869,7 +872,7 @@ class Encoder(nn.Module):
 
         # Output layers.
         self.output_norm = norm_fn(ch[-1])
-        self.output_proj = Conv1x1(ch[-1], 2 * latent_dim, bias=False)
+        self.output_proj = Conv1x1(ch[-1], 2 * latent_dim, bias=bias)
 
     @property
     def temporal_downsample(self):

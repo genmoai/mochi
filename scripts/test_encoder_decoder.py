@@ -53,6 +53,17 @@ def reconstruct(mochi_dir, video_path):
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
 
+    decoder_factory = DecoderModelFactory(
+        model_path=f"{mochi_dir}/decoder.safetensors",
+        model_stats_path=f"{mochi_dir}/decoder_stats.json"
+    )
+    decoder = decoder_factory.get_model(
+        world_size=1,
+        device_id=0,
+        local_rank=0
+    )
+
+
     # Create VAE encoder
     encoder = Encoder(
         in_channels=15,
@@ -62,21 +73,22 @@ def reconstruct(mochi_dir, video_path):
         latent_dim=12,
         temporal_reductions=[1, 2, 3],
         spatial_reductions=[2, 2, 2],
-        # prune_bottlenecks=[True, True, True, False, False],
-        prune_bottlenecks=[False, False, False, False, False],
-        has_attentions=[False, True, True, True, True],
+
+        # distilled configuration ...
+        prune_bottlenecks=[True, True, True, False, False],
+        has_attentions=[False, False, False, False, False],
+        affine=False,
+        bias=False
+
+        # undistilled args ...
+        # prune_bottlenecks=[False, False, False, False, False],
+        # has_attentions=[False, True, True, True, True],
+        # affine=True,
+        # bias=True
     )
     device = torch.device("cuda:0")
     encoder = encoder.to(device, memory_format=torch.channels_last_3d)
-    # drop anything starting with decoder.
-    # state_dict = load_file(f"{mochi_dir}/encoder.distilled.safetensors")
-    # state_dict = torch.load(f"{mochi_dir}/encoder.distilled.pt")['vae']
-    state_dict = torch.load('somepath')
-    state_dict = {k: v for k, v in state_dict.items() if not k.startswith("decoder.")}
-    # remove the encoder. prefix
-    state_dict = {k.removeprefix("encoder."): v for k, v in state_dict.items()}
-    # print(f"keys: {state_dict.keys()}, num keys: {len(state_dict)}")
-    encoder.load_state_dict(state_dict)
+    encoder.load_state_dict(load_file(f"{mochi_dir}/encoder.distilled.safetensors"))
     encoder.eval()
 
     # get fps and numframes in video
