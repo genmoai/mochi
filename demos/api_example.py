@@ -1,5 +1,10 @@
 #! /usr/bin/env python
+import sys
+from pathlib import Path
 from textwrap import dedent
+
+from genmo.lib.progress import progress_bar
+from genmo.lib.utils import save_video
 from genmo.mochi_preview.pipelines import (
     DecoderModelFactory,
     DitModelFactory,
@@ -7,10 +12,6 @@ from genmo.mochi_preview.pipelines import (
     T5ModelFactory,
     linear_quadratic_schedule,
 )
-from genmo.lib.utils import save_video
-from genmo.lib.progress import progress_bar
-from pathlib import Path
-import sys
 
 MOCHI_DIR =  sys.argv[1]
 assert Path(MOCHI_DIR).exists(), f"Model directory {MOCHI_DIR} does not exist."

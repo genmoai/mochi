@@ -7,6 +7,8 @@ import click
 import numpy as np
 import torch
 
+from genmo.lib.progress import progress_bar
+from genmo.lib.utils import save_video
 from genmo.mochi_preview.pipelines import (
     DecoderModelFactory,
     DitModelFactory,
@@ -15,8 +17,6 @@ from genmo.mochi_preview.pipelines import (
     T5ModelFactory,
     linear_quadratic_schedule,
 )
-from genmo.lib.progress import progress_bar
-from genmo.lib.utils import save_video
 
 pipeline = None
 model_dir_path = None
@@ -38,10 +38,13 @@ def load_model():
         klass = MochiSingleGPUPipeline if num_gpus == 1 else MochiMultiGPUPipeline
         kwargs = dict(
             text_encoder_factory=T5ModelFactory(),
-            dit_factory=DitModelFactory(model_path=f"{MOCHI_DIR}/dit.safetensors", model_dtype="bf16"),
+            dit_factory=DitModelFactory(
+                model_path=f"{MOCHI_DIR}/dit.safetensors", 
+                vae_stats_path=f"{MOCHI_DIR}/decoder_stats.json",
+                model_dtype="bf16"
+            ),
             decoder_factory=DecoderModelFactory(
                 model_path=f"{MOCHI_DIR}/decoder.safetensors",
-                model_stats_path=f"{MOCHI_DIR}/decoder_stats.json",
             ),
         )
         if num_gpus > 1:

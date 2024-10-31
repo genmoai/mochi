@@ -8,6 +8,7 @@ from PIL import Image
 
 from genmo.lib.progress import get_new_progress_bar
 
+
 class Timer:
     def __init__(self):
         self.times = {}  # Dictionary to store times per stage
@@ -51,7 +52,9 @@ def save_video(final_frames, output_path, fps=30):
             frame_paths.append(frame_path)
 
         frame_pattern = os.path.join(tmpdir, "frame_%04d.png")
-        ffmpeg_cmd = f"ffmpeg -y -r {fps} -i {frame_pattern} -vcodec libx264 -pix_fmt yuv420p -preset veryfast {output_path}"
+        ffmpeg_cmd = (
+            f"ffmpeg -y -r {fps} -i {frame_pattern} -vcodec libx264 -pix_fmt yuv420p -preset veryfast {output_path}"
+        )
         try:
             subprocess.run(ffmpeg_cmd, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         except subprocess.CalledProcessError as e:

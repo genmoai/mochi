@@ -1,3 +1,4 @@
+import json
 import os
 import random
 from abc import ABC, abstractmethod
@@ -31,9 +32,16 @@ from transformers.models.t5.modeling_t5 import T5Block
 
 import genmo.mochi_preview.dit.joint_model.context_parallel as cp
 import genmo.mochi_preview.vae.cp_conv as cp_conv
-from genmo.mochi_preview.vae.models import Decoder, dit_latents_to_vae_latents, decode_latents_tiled_spatial, decode_latents_tiled_full, decoded_latents_to_frames
 from genmo.lib.progress import get_new_progress_bar, progress_bar
 from genmo.lib.utils import Timer
+from genmo.mochi_preview.vae.models import (
+    Decoder,
+    decode_latents_tiled_full,
+    decode_latents_tiled_spatial,
+    decoded_latents_to_frames,
+    dit_latents_to_vae_latents,
+)
+
 
 def linear_quadratic_schedule(num_steps, threshold_noise, linear_steps=None):
     if linear_steps is None:
@@ -113,11 +121,13 @@ class T5ModelFactory(ModelFactory):
 class DitModelFactory(ModelFactory):
     def __init__(self, *, model_path: str, model_dtype: str, vae_stats_path: str, attention_mode: Optional[str] = None):
         if attention_mode is None:
-            from genmo.lib.attn_imports import flash_varlen_qkvpacked_attn # type: ignore
+            from genmo.lib.attn_imports import flash_varlen_qkvpacked_attn  # type: ignore
 
             attention_mode = "sdpa" if flash_varlen_qkvpacked_attn is None else "flash"
         print(f"Attention mode: {attention_mode}")
-        super().__init__(model_path=model_path, model_dtype=model_dtype, vae_stats_path=vae_stats_path, attention_mode=attention_mode)
+        super().__init__(
+            model_path=model_path, model_dtype=model_dtype, vae_stats_path=vae_stats_path, attention_mode=attention_mode
+        )
 
     def get_model(self, *, local_rank, device_id, world_size):
         # TODO(ved): Set flag for torch.compile
@@ -165,6 +175,7 @@ class DitModelFactory(ModelFactory):
         elif isinstance(device_id, int):
             model = model.to(torch.device(f"cuda:{device_id}"))
 
+        device = torch.device(f"cuda:{device_id}") if isinstance(device_id, int) else "cpu"
         model_stats = json.load(open(self.kwargs["vae_stats_path"]))
         model.register_buffer("vae_mean", torch.tensor(model_stats["mean"], device=device))
         model.register_buffer("vae_std", torch.tensor(model_stats["std"], device=device))
@@ -178,7 +189,6 @@ class DecoderModelFactory(ModelFactory):
     def get_model(self, *, local_rank, device_id, world_size):
         # TODO(ved): Set flag for torch.compile
         # TODO(ved): Use skip_init
-        import json
 
         decoder = Decoder(
             out_channels=3,
@@ -364,6 +374,7 @@ def sample_model(device, dit, conditioning, **args):
     z = z[:B] if cond_batched else z
     return dit_latents_to_vae_latents(z, dit.vae_mean, dit.vae_std)
 
+
 def decode_latents(decoder, z):
     cp_rank, cp_size = cp.get_cp_rank_size()
     z = z.tensor_split(cp_size, dim=2)[cp_rank]  # split along temporal dim
@@ -371,6 +382,7 @@ def decode_latents(decoder, z):
         samples = decoder(z)
     samples = cp_conv.gather_all_frames(samples)
     return decoded_latents_to_frames(samples)
+
 
 @contextmanager
 def move_to_device(model: nn.Module, target_device):
@@ -444,8 +456,7 @@ class MochiSingleGPUPipeline:
                 frames = (
                     decode_latents_tiled_full(self.decoder, latents, **self.decode_args)
                     if self.decode_type == "tiled_full"
-                    else
-                    decode_latents_tiled_spatial(self.decoder, latents, **self.decode_args)
+                    else decode_latents_tiled_spatial(self.decoder, latents, **self.decode_args)
                     if self.decode_type == "tiled_spatial"
                     else decode_latents(self.decoder, latents)
                 )

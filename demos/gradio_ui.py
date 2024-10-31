@@ -1,12 +1,13 @@
 #! /usr/bin/env python
 
 
+import sys
+
 import click
 import gradio as gr
 
-import sys
 sys.path.append("..")
-from cli import generate_video, configure_model
+from cli import configure_model, generate_video
 
 with gr.Blocks() as demo:
     gr.Markdown("Video Generator")
