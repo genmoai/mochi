@@ -9,7 +9,7 @@ from einops import rearrange
 import genmo.mochi_preview.dit.joint_model.context_parallel as cp
 from genmo.mochi_preview.vae.cp_conv import cp_pass_frames, gather_all_frames
 from genmo.mochi_preview.vae.latent_dist import LatentDistribution
-
+from genmo.lib.progress import get_new_progress_bar
 
 def cast_tuple(t, length=1):
     return t if isinstance(t, tuple) else ((t,) * length)
@@ -795,7 +795,6 @@ class Encoder(nn.Module):
         latent_dim: int,
         temporal_reductions: List[int],
         spatial_reductions: List[int],
-        # used to toggle between distilled and undistilled version
         prune_bottlenecks: List[bool],
         has_attentions: List[bool],
         affine: bool = True,
@@ -910,6 +909,14 @@ def dit_latents_to_vae_latents(
     assert dit_outputs.ndim == 5
     assert dit_outputs.size(1) == mean.size(0) == std.size(0)
     return dit_outputs * std.to(dit_outputs) + mean.to(dit_outputs)
+
+def decoded_latents_to_frames(samples):
+    samples = samples.float()
+    samples.clamp_(-1, 1)
+    samples = (samples + 1.0) / 2.0
+    samples.clamp_(0.0, 1.0)
+    frames = rearrange(samples, "b c t h w -> b t h w c")
+    return frames
 
 @torch.inference_mode()
 def decode_latents_tiled_full(

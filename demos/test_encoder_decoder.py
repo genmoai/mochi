@@ -1,13 +1,10 @@
 import time
 import click
 import torch
-import subprocess
-import numpy as np
-import cv2
 from einops import rearrange
 import torchvision
 
-from genmo.mochi_preview.vae.models import Encoder, Decoder, add_fourier_features
+from genmo.mochi_preview.vae.models import Encoder, add_fourier_features
 from genmo.lib.utils import save_video
 from genmo.mochi_preview.pipelines import DecoderModelFactory, decode_latents_tiled_spatial
 from safetensors.torch import load_file
@@ -15,8 +12,7 @@ from safetensors.torch import load_file
 @click.command()
 @click.argument('mochi_dir', type=str)
 @click.argument('video_path', type=click.Path(exists=True))
-@click.argument('model_size', type=str, default="small")
-def reconstruct(mochi_dir, video_path, model_size):
+def reconstruct(mochi_dir, video_path):
 
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
@@ -31,12 +27,6 @@ def reconstruct(mochi_dir, video_path, model_size):
     )
 
     config = dict(
-        prune_bottlenecks=[True, True, True, False, False],
-        has_attentions=[False, False, False, False, False],
-        affine=False,
-        bias=False,
-        padding_mode="zeros"
-    ) if model_size == "small" else dict(
         prune_bottlenecks=[False, False, False, False, False],
         has_attentions=[False, True, True, True, True],
         affine=True,
@@ -58,7 +48,7 @@ def reconstruct(mochi_dir, video_path, model_size):
     )
     device = torch.device("cuda:0")
     encoder = encoder.to(device, memory_format=torch.channels_last_3d)
-    encoder.load_state_dict(load_file(f"{mochi_dir}/encoder.{model_size}.safetensors"))
+    encoder.load_state_dict(load_file(f"{mochi_dir}/encoder.safetensors"))
     encoder.eval()
 
     video, _, metadata = torchvision.io.read_video(video_path, output_format='THWC')
@@ -66,7 +56,6 @@ def reconstruct(mochi_dir, video_path, model_size):
     video = rearrange(video, 't h w c -> c t h w')
     video = video.unsqueeze(0)
     assert video.dtype == torch.uint8
-    assert video.shape == (1, 3, num_frames, height, width)
     # Convert to float in [-1, 1] range.
     video = video.float() / 127.5 - 1.0
     video = video.to(device)
@@ -84,7 +73,10 @@ def reconstruct(mochi_dir, video_path, model_size):
             frames = decode_latents_tiled_spatial(decoder, ldist.sample(), num_tiles_w=2, num_tiles_h=2)
             torch.cuda.synchronize()
             print(f"Time to decode: {time.time() - t0:.2f}s")
-    save_video(frames.cpu().numpy()[0], f"{video_path}.{model_size}.recon.mp4", fps=fps)
+    t0 = time.time()
+    save_video(frames.cpu().numpy()[0], f"{video_path}.recon.mp4", fps=fps)
+    print(f"Time to save: {time.time() - t0:.2f}s")
+    
 
 if __name__ == "__main__":
     reconstruct()

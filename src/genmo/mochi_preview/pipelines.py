@@ -11,7 +11,7 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
-from einops import rearrange, repeat
+from einops import repeat
 from safetensors.torch import load_file
 from torch import nn
 from torch.distributed.fsdp import (
@@ -31,7 +31,7 @@ from transformers.models.t5.modeling_t5 import T5Block
 
 import genmo.mochi_preview.dit.joint_model.context_parallel as cp
 import genmo.mochi_preview.vae.cp_conv as cp_conv
-from genmo.mochi_preview.vae.models import Decoder, dit_latents_to_vae_latents, decode_latents_tiled_spatial, decode_latents_tiled_full
+from genmo.mochi_preview.vae.models import Decoder, dit_latents_to_vae_latents, decode_latents_tiled_spatial, decode_latents_tiled_full, decoded_latents_to_frames
 from genmo.lib.progress import get_new_progress_bar, progress_bar
 from genmo.lib.utils import Timer
 
@@ -362,16 +362,7 @@ def sample_model(device, dit, conditioning, **args):
         z = z + dsigma * pred
 
     z = z[:B] if cond_batched else z
-    return dit_latents_to_vae_latents(z, decoder.vae_mean, decoder.vae_std)
-
-def decoded_latents_to_frames(samples):
-    samples = samples.float()
-    samples.clamp_(-1, 1)
-    samples = (samples + 1.0) / 2.0
-    samples.clamp_(0.0, 1.0)
-    frames = rearrange(samples, "b c t h w -> b t h w c")
-    return frames
-
+    return dit_latents_to_vae_latents(z, dit.vae_mean, dit.vae_std)
 
 def decode_latents(decoder, z):
     cp_rank, cp_size = cp.get_cp_rank_size()
