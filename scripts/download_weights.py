@@ -2,44 +2,36 @@
 import click
 import os
 
+# Based off of Kijai's script
 @click.command()
-@click.argument('repo_id', required=True)
 @click.argument('output_dir', required=True)
-def download_weights(repo_id, output_dir):
+def download_weights(output_dir):
+    repo_id = "genmo/mochi-1-preview"
     model = "dit.safetensors"
-    vae = "vae.safetensors"
+    decoder = "decoder.safetensors"
+    decoder_stats = "decoder_stats.json"
     if not os.path.exists(output_dir):
         print(f"Creating output directory: {output_dir}")
         os.makedirs(output_dir, exist_ok=True)
 
-    model_download_path = os.path.join(output_dir)
-    if not os.path.exists(model_download_path):
-        print(f"Downloading mochi model to: {model_download_path}")
-        from huggingface_hub import snapshot_download
-        snapshot_download(
-            repo_id=repo_id,
-            allow_patterns=[f"*{model}*"],
-            local_dir=model_download_path,
-            local_dir_use_symlinks=False,
-        )
-    else:
-        print(f"Dit already exists in: {model_download_path}")
+    def download_file(repo_id, output_dir, filename, description):
+        file_path = os.path.join(output_dir, filename)
+        if not os.path.exists(file_path):
+            print(f"Downloading mochi {description} to: {file_path}")
+            from huggingface_hub import snapshot_download
+            snapshot_download(
+                repo_id=repo_id,
+                allow_patterns=[f"*{filename}*"],
+                local_dir=output_dir,
+                local_dir_use_symlinks=False,
+            )
+        else:
+            print(f"{description} already exists in: {file_path}")
+        assert os.path.exists(file_path)
 
-    # VAE
-    vae_download_path = os.path.join(output_dir)
-    vae_path = os.path.join(vae_download_path, vae)
-
-    if not os.path.exists(vae_path):
-        print(f"Downloading mochi VAE to: {vae_path}")
-        from huggingface_hub import snapshot_download
-        snapshot_download(
-            repo_id=repo_id,
-            allow_patterns=[f"*{vae}*"],
-            local_dir=vae_download_path,
-            local_dir_use_symlinks=False,
-        )
-    else:
-        print(f"Decoder already exists in: {vae_path}")
+    download_file(repo_id, output_dir, model, "model")
+    download_file(repo_id, output_dir, decoder, "decoder")
+    download_file(repo_id, output_dir, decoder_stats, "decoder stats")
 
 if __name__ == "__main__":
     download_weights()
