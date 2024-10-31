@@ -65,7 +65,7 @@ def reconstruct(mochi_dir, video_path):
 
 
     # Create VAE encoder
-    encoder = Encoder(
+    distilled_encoder = Encoder(
         in_channels=15,
         base_channels=64,
         channel_multipliers=[1, 2, 4, 6],
@@ -87,9 +87,9 @@ def reconstruct(mochi_dir, video_path):
         # bias=True
     )
     device = torch.device("cuda:0")
-    encoder = encoder.to(device, memory_format=torch.channels_last_3d)
-    encoder.load_state_dict(load_file(f"{mochi_dir}/encoder.distilled.safetensors"))
-    encoder.eval()
+    distilled_encoder = distilled_encoder.to(device, memory_format=torch.channels_last_3d)
+    distilled_encoder.load_state_dict(load_file(f"{mochi_dir}/encoder.distilled.safetensors"))
+    distilled_encoder.eval()
 
     # get fps and numframes in video
     import cv2
@@ -112,7 +112,7 @@ def reconstruct(mochi_dir, video_path):
     # Encode video to latent
     with torch.inference_mode():
         with torch.autocast("cuda", dtype=torch.bfloat16):
-            ldist = encoder(video)
+            ldist = distilled_encoder(video)
             frames = decode_latents_tiled_spatial(decoder, ldist.sample(), num_tiles_w=2, num_tiles_h=2)
     save_video(frames.cpu().numpy()[0], "reconstructed.mp4", fps=fps)
 
