@@ -421,7 +421,7 @@ class MochiSingleGPUPipeline:
         t.print_stats()
 
     def __call__(self, batch_cfg, prompt, negative_prompt, **kwargs):
-        with progress_bar(type="tqdm"), torch.inference_mode():
+        with torch.inference_mode():
             print_max_memory = lambda: print(
                 f"Max memory reserved: {torch.cuda.max_memory_reserved() / 1024**3:.2f} GB"
             )
