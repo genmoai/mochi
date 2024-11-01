@@ -129,7 +129,7 @@ inviting atmosphere.
 @click.option("--width", default=848, type=int, help="Width of the video.")
 @click.option("--height", default=480, type=int, help="Height of the video.")
 @click.option("--num_frames", default=163, type=int, help="Number of frames.")
-@click.option("--seed", default=12345, type=int, help="Random seed.")
+@click.option("--seed", default=1710977262, type=int, help="Random seed.")
 @click.option("--cfg_scale", default=4.5, type=float, help="CFG Scale.")
 @click.option("--num_steps", default=64, type=int, help="Number of inference steps.")
 @click.option("--model_dir", required=True, help="Path to the model directory.")

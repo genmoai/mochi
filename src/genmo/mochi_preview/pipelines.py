@@ -39,8 +39,8 @@ from genmo.mochi_preview.vae.models import (
     decode_latents_tiled_full,
     decode_latents_tiled_spatial,
     decoded_latents_to_frames,
-    dit_latents_to_vae_latents,
 )
+from genmo.mochi_preview.vae.vae_stats import dit_latents_to_vae_latents
 
 
 def linear_quadratic_schedule(num_steps, threshold_noise, linear_steps=None):
@@ -354,7 +354,9 @@ def sample_model(device, dit, conditioning, **args):
                 out_cond = dit(z, sigma, **cond_text)
                 out_uncond = dit(z, sigma, **cond_null)
         assert out_cond.shape == out_uncond.shape
-        return out_uncond + cfg_scale * (out_cond - out_uncond), out_cond
+        out_uncond = out_uncond.to(z)
+        out_cond = out_cond.to(z)
+        return out_uncond + cfg_scale * (out_cond - out_uncond)
 
     # Euler sampler w/ customizable sigma schedule & cfg scale
     for i in get_new_progress_bar(range(0, sample_steps), desc="Sampling"):
@@ -362,17 +364,16 @@ def sample_model(device, dit, conditioning, **args):
         dsigma = sigma - sigma_schedule[i + 1]
 
         # `pred` estimates `z_0 - eps`.
-        pred, output_cond = model_fn(
+        pred = model_fn(
             z=z,
             sigma=torch.full([B] if cond_text else [B * 2], sigma, device=z.device),
             cfg_scale=cfg_schedule[i],
         )
-        pred = pred.to(z)
-        output_cond = output_cond.to(z)
+        assert pred.dtype == torch.float32
         z = z + dsigma * pred
 
     z = z[:B] if cond_batched else z
-    return dit_latents_to_vae_latents(z, dit.vae_mean, dit.vae_std)
+    return dit_latents_to_vae_latents(z)
 
 
 def decode_latents(decoder, z):
