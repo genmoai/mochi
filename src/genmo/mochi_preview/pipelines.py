@@ -119,14 +119,14 @@ class T5ModelFactory(ModelFactory):
 
 
 class DitModelFactory(ModelFactory):
-    def __init__(self, *, model_path: str, model_dtype: str, vae_stats_path: str, attention_mode: Optional[str] = None):
+    def __init__(self, *, model_path: str, model_dtype: str, attention_mode: Optional[str] = None):
         if attention_mode is None:
             from genmo.lib.attn_imports import flash_varlen_qkvpacked_attn  # type: ignore
 
             attention_mode = "sdpa" if flash_varlen_qkvpacked_attn is None else "flash"
         print(f"Attention mode: {attention_mode}")
         super().__init__(
-            model_path=model_path, model_dtype=model_dtype, vae_stats_path=vae_stats_path, attention_mode=attention_mode
+            model_path=model_path, model_dtype=model_dtype, attention_mode=attention_mode
         )
 
     def get_model(self, *, local_rank, device_id, world_size):
@@ -177,8 +177,6 @@ class DitModelFactory(ModelFactory):
 
         device = torch.device(f"cuda:{device_id}") if isinstance(device_id, int) else "cpu"
         model_stats = json.load(open(self.kwargs["vae_stats_path"]))
-        model.register_buffer("vae_mean", torch.tensor(model_stats["mean"], device=device))
-        model.register_buffer("vae_std", torch.tensor(model_stats["std"], device=device))
         return model.eval()
 
 

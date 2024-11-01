@@ -70,7 +70,6 @@ pipeline = MochiSingleGPUPipeline(
     ),
     decoder_factory=DecoderModelFactory(
         model_path=f"{MOCHI_DIR}/vae.safetensors",
-        model_stats_path=f"{MOCHI_DIR}/vae_stats.json",
     ),
     cpu_offload=True,
     decode_type="tiled_full",
