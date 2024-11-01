@@ -36,9 +36,9 @@ from genmo.lib.progress import get_new_progress_bar, progress_bar
 from genmo.lib.utils import Timer
 from genmo.mochi_preview.vae.models import (
     Decoder,
+    decode_latents,
     decode_latents_tiled_full,
     decode_latents_tiled_spatial,
-    decoded_latents_to_frames,
 )
 from genmo.mochi_preview.vae.vae_stats import dit_latents_to_vae_latents
 
@@ -369,15 +369,6 @@ def sample_model(device, dit, conditioning, **args):
 
     z = z[:B] if cond_batched else z
     return dit_latents_to_vae_latents(z)
-
-
-def decode_latents(decoder, z):
-    cp_rank, cp_size = cp.get_cp_rank_size()
-    z = z.tensor_split(cp_size, dim=2)[cp_rank]  # split along temporal dim
-    with torch.autocast("cuda", dtype=torch.bfloat16):
-        samples = decoder(z)
-    samples = cp_conv.gather_all_frames(samples)
-    return decoded_latents_to_frames(samples)
 
 
 @contextmanager

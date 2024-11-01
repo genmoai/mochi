@@ -1004,3 +1004,12 @@ def decode_latents_tiled_spatial(
     decoded = apply_tiled(decoder, z, num_tiles_w, num_tiles_h, overlap, min_block_size)
     assert decoded is not None, f"Failed to decode latents with tiled spatial method"
     return normalize_decoded_frames(decoded)
+
+@torch.inference_mode()
+def decode_latents(decoder, z):
+    cp_rank, cp_size = cp.get_cp_rank_size()
+    z = z.tensor_split(cp_size, dim=2)[cp_rank]  # split along temporal dim
+    with torch.autocast("cuda", dtype=torch.bfloat16):
+        samples = decoder(z)
+    samples = cp_conv.gather_all_frames(samples)
+    return normalize_decoded_frames(samples)
