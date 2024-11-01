@@ -32,7 +32,12 @@ You will also need to install [FFMPEG](https://www.ffmpeg.org/) to turn your out
 
 ## Download Weights
 
-Download the weights from [Hugging Face](https://huggingface.co/genmo/mochi-1-preview/tree/main) or via `magnet:?xt=urn:btih:441da1af7a16bcaa4f556964f8028d7113d21cbb&dn=weights&tr=udp://tracker.opentrackr.org:1337/announce` to a folder on your computer.
+Use [download_weights.py](scripts/download_weights.py) to download the model + decoder to a local directory. Use it like this:
+```
+python3 ./scripts/download_weights.py <path_to_downloaded_directory>
+```
+
+Or, directly download the weights from [Hugging Face](https://huggingface.co/genmo/mochi-1-preview/tree/main) or via `magnet:?xt=urn:btih:441da1af7a16bcaa4f556964f8028d7113d21cbb&dn=weights&tr=udp://tracker.opentrackr.org:1337/announce` to a folder on your computer.
 
 ## Running
 
