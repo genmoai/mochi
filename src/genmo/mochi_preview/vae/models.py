@@ -895,14 +895,12 @@ class Encoder(nn.Module):
         return LatentDistribution(means, logvar)
 
 
-def decoded_latents_to_frames(samples):
+def normalize_decoded_frames(samples):
     samples = samples.float()
-    samples.clamp_(-1, 1)
     samples = (samples + 1.0) / 2.0
     samples.clamp_(0.0, 1.0)
     frames = rearrange(samples, "b c t h w -> b t h w c")
     return frames
-
 
 @torch.inference_mode()
 def decode_latents_tiled_full(
@@ -989,7 +987,7 @@ def decode_latents_tiled_full(
             result_row.append(tile[:, :, :, :row_limit_height, :row_limit_width])
         result_rows.append(torch.cat(result_row, dim=4))
 
-    return decoded_latents_to_frames(torch.cat(result_rows, dim=3))
+    return normalize_decoded_frames(torch.cat(result_rows, dim=3))
 
 
 @torch.inference_mode()
@@ -1005,4 +1003,4 @@ def decode_latents_tiled_spatial(
 ):
     decoded = apply_tiled(decoder, z, num_tiles_w, num_tiles_h, overlap, min_block_size)
     assert decoded is not None, f"Failed to decode latents with tiled spatial method"
-    return decoded_latents_to_frames(decoded)
+    return normalize_decoded_frames(decoded)

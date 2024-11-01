@@ -174,9 +174,6 @@ class DitModelFactory(ModelFactory):
             )
         elif isinstance(device_id, int):
             model = model.to(torch.device(f"cuda:{device_id}"))
-
-        device = torch.device(f"cuda:{device_id}") if isinstance(device_id, int) else "cpu"
-        model_stats = json.load(open(self.kwargs["vae_stats_path"]))
         return model.eval()
 
 
