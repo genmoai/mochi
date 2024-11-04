@@ -6,9 +6,9 @@ import torchvision
 from einops import rearrange
 from safetensors.torch import load_file
 
-from genmo.lib.utils import save_video
-from genmo.mochi_preview.pipelines import DecoderModelFactory, decode_latents_tiled_spatial
-from genmo.mochi_preview.vae.models import Encoder, add_fourier_features
+from src.genmo.lib.utils import save_video
+from src.genmo.mochi_preview.pipelines import DecoderModelFactory, decode_latents_tiled_spatial
+from src.genmo.mochi_preview.vae.models import Encoder, add_fourier_features
 
 
 @click.command()

@@ -7,23 +7,23 @@ import torch.nn.functional as F
 from einops import rearrange
 from torch.nn.attention import sdpa_kernel
 
-import genmo.mochi_preview.dit.joint_model.context_parallel as cp
-from genmo.mochi_preview.dit.joint_model.layers import (
+import src.genmo.mochi_preview.dit.joint_model.context_parallel as cp
+from src.genmo.mochi_preview.dit.joint_model.layers import (
     FeedForward,
     PatchEmbed,
     RMSNorm,
     TimestepEmbedder,
 )
-from genmo.mochi_preview.dit.joint_model.mod_rmsnorm import modulated_rmsnorm
-from genmo.mochi_preview.dit.joint_model.residual_tanh_gated_rmsnorm import (
+from src.genmo.mochi_preview.dit.joint_model.mod_rmsnorm import modulated_rmsnorm
+from src.genmo.mochi_preview.dit.joint_model.residual_tanh_gated_rmsnorm import (
     residual_tanh_gated_rmsnorm,
 )
-from genmo.mochi_preview.dit.joint_model.rope_mixed import (
+from src.genmo.mochi_preview.dit.joint_model.rope_mixed import (
     compute_mixed_rotation,
     create_position_matrix,
 )
-from genmo.mochi_preview.dit.joint_model.temporal_rope import apply_rotary_emb_qk_real
-from genmo.mochi_preview.dit.joint_model.utils import (
+from src.genmo.mochi_preview.dit.joint_model.temporal_rope import apply_rotary_emb_qk_real
+from src.genmo.mochi_preview.dit.joint_model.utils import (
     AttentionPool,
     modulate,
     pad_and_split_xy,
@@ -33,7 +33,7 @@ from genmo.mochi_preview.dit.joint_model.utils import (
 COMPILE_FINAL_LAYER = os.environ.get("COMPILE_DIT") == "1"
 COMPILE_MMDIT_BLOCK = os.environ.get("COMPILE_DIT") == "1"
 
-from genmo.lib.attn_imports import comfy_attn, flash_varlen_qkvpacked_attn, sage_attn, sdpa_attn_ctx
+from src.genmo.lib.attn_imports import comfy_attn, flash_varlen_qkvpacked_attn, sage_attn, sdpa_attn_ctx
 
 
 class AsymmetricAttention(nn.Module):

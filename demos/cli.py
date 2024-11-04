@@ -7,9 +7,9 @@ import click
 import numpy as np
 import torch
 
-from genmo.lib.progress import progress_bar
-from genmo.lib.utils import save_video
-from genmo.mochi_preview.pipelines import (
+from src.genmo.lib.progress import progress_bar
+from src.genmo.lib.utils import save_video
+from src.genmo.mochi_preview.pipelines import (
     DecoderModelFactory,
     DitModelFactory,
     MochiMultiGPUPipeline,

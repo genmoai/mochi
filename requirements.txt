@@ -12,3 +12,4 @@ torch>=2.4.1
 transformers>=4.45.2
 click>=8.1.7
 huggingface_hub>=0.26.2
+gradio>=5.4.0
