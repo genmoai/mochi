@@ -10,3 +10,5 @@ sentencepiece>=0.2.0
 setuptools>=75.2.0
 torch>=2.4.1
 transformers>=4.45.2
+click>=8.1.7
+huggingface_hub>=0.26.2
