@@ -13,8 +13,9 @@ Mochi 1 preview is an open state-of-the-art video generation model with high-fid
 
 Install using [uv](https://github.com/astral-sh/uv):
 
+* Prerequisites: install FFmpeg official download page: [FFmpeg Download](https://ffmpeg.org/download.html) or package managers (apt/brew/dnf).
+
 ```bash
-sudo apt install ffmpeg -y
 git clone https://github.com/genmoai/models
 cd models 
 pip install uv
