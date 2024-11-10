@@ -94,6 +94,11 @@ video = pipeline(
 )
 ```
 
+## Video Tutorial
+
+Step by step so easy to use video tutorial to use on Windows and on Cloud with SwarmUI : https://www.youtube.com/watch?v=iqBV7bCbDJY
+
+
 ## Model Architecture
 
 Mochi 1 represents a significant advancement in open-source video generation, featuring a 10 billion parameter diffusion model built on our novel Asymmetric Diffusion Transformer (AsymmDiT) architecture. Trained entirely from scratch, it is the largest video generative model ever openly released. And best of all, it’s a simple, hackable architecture. Additionally, we are releasing an inference harness that includes an efficient context parallel implementation. 
