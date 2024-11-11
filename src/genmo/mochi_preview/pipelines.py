@@ -95,12 +95,13 @@ class ModelFactory(ABC):
 
 
 class T5ModelFactory(ModelFactory):
-    def __init__(self):
+    def __init__(self, model_dir=None):
         super().__init__()
+        self.model_dir = model_dir or T5_MODEL
 
     def get_model(self, *, local_rank, device_id, world_size):
         super().get_model(local_rank=local_rank, device_id=device_id, world_size=world_size)
-        model = T5EncoderModel.from_pretrained(T5_MODEL)
+        model = T5EncoderModel.from_pretrained(self.model_dir)
         if world_size > 1:
             model = setup_fsdp_sync(
                 model,
@@ -386,8 +387,8 @@ def move_to_device(model: nn.Module, target_device):
     model.to(og_device)
 
 
-def t5_tokenizer():
-    return T5Tokenizer.from_pretrained(T5_MODEL, legacy=False)
+def t5_tokenizer(model_dir=None):
+    return T5Tokenizer.from_pretrained(model_dir or T5_MODEL, legacy=False)
 
 
 class MochiSingleGPUPipeline:
@@ -402,7 +403,7 @@ class MochiSingleGPUPipeline:
         decode_args: Optional[Dict[str, Any]] = None,
     ):
         self.device = torch.device("cuda:0")
-        self.tokenizer = t5_tokenizer()
+        self.tokenizer = t5_tokenizer(text_encoder_factory.model_dir)
         t = Timer()
         self.cpu_offload = cpu_offload
         self.decode_args = decode_args or {}
@@ -484,7 +485,7 @@ class MultiGPUContext:
         cp.set_cp_group(pg, list(range(world_size)), local_rank)
         distributed_kwargs = dict(local_rank=local_rank, device_id=device_id, world_size=world_size)
         self.world_size = world_size
-        self.tokenizer = t5_tokenizer()
+        self.tokenizer = t5_tokenizer(text_encoder_factory.model_dir)
         with t("load_text_encoder"):
             self.text_encoder = text_encoder_factory.get_model(**distributed_kwargs)
         with t("load_dit"):
