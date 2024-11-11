@@ -124,6 +124,7 @@ Under the research preview, Mochi 1 is a living and evolving checkpoint. There a
 
 ## Related Work
 - [ComfyUI-MochiWrapper](https://github.com/kijai/ComfyUI-MochiWrapper) adds ComfyUI support for Mochi. The integration of Pytorch's SDPA attention was taken from their repository.
+- [mochi-xdit](https://github.com/xdit-project/mochi-xdit) is a fork of this repository and improve the parallel inference speed with [xDiT](https://github.com/xdit-project/xdit).
 
 
 ## BibTeX
