@@ -532,7 +532,6 @@ class AsymmDiTJoint(nn.Module):
             # pos[:, 0] is the frame index for each location,
             # pos[:, 1] is the row index for each location, and
             # pos[:, 2] is the column index for each location.
-            pH, pW = H // self.patch_size, W // self.patch_size
             N = T * pH * pW
             assert x.size(1) == N
             pos = create_position_matrix(T, pH=pH, pW=pW, device=x.device, dtype=torch.float32)  # (N, 3)
