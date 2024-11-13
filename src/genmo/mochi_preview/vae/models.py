@@ -373,8 +373,7 @@ class Attention(nn.Module):
 
         # Input: qkv with shape [B, t, 3 * num_heads * head_dim]
         # Output: x with shape [B, num_heads, t, head_dim]
-        q, k, v = prepare_for_attention(qkv, self.head_dim, qk_norm=self.qk_norm)
-
+        
         attn_kwargs = dict(
             attn_mask=None,
             dropout_p=0.0,
@@ -382,18 +381,25 @@ class Attention(nn.Module):
             scale=self.head_dim**-0.5,
         )
 
-        if q.size(0) <= chunk_size:
+        if qkv.size(0) <= chunk_size:
+            q, k, v = prepare_for_attention(qkv, self.head_dim, qk_norm=self.qk_norm)
             x = F.scaled_dot_product_attention(q, k, v, **attn_kwargs)  # [B, num_heads, t, head_dim]
         else:
             # Evaluate in chunks to avoid `RuntimeError: CUDA error: invalid configuration argument.`
             # Chunks of 2**16 and up cause an error.
-            x = torch.empty_like(q)
-            for i in range(0, q.size(0), chunk_size):
-                qc = q[i : i + chunk_size]
-                kc = k[i : i + chunk_size]
-                vc = v[i : i + chunk_size]
+            # x = torch.empty_like(q)
+            # for i in range(0, qkv.size(0), chunk_size):
+            #     qc = q[i : i + chunk_size]
+            #     kc = k[i : i + chunk_size]
+            #     vc = v[i : i + chunk_size]
+            #     chunk = F.scaled_dot_product_attention(qc, kc, vc, **attn_kwargs)
+            #     x[i : i + chunk_size].copy_(chunk)
+            x = torch.empty((qkv.size(0), self.num_heads, qkv.size(1), self.head_dim), dtype=qkv.dtype, device=qkv.device)
+            for i in range(0, qkv.size(0), chunk_size):
+                qkv_chunk = qkv[i:i+chunk_size]
+                qc, kc, vc = prepare_for_attention(qkv_chunk, self.head_dim, qk_norm=self.qk_norm)
                 chunk = F.scaled_dot_product_attention(qc, kc, vc, **attn_kwargs)
-                x[i : i + chunk_size].copy_(chunk)
+                x[i:i+chunk_size].copy_(chunk)
 
         assert x.size(0) == q.size(0)
         x = x.transpose(1, 2)  # [B, t, num_heads, head_dim]
