@@ -388,13 +388,6 @@ class Attention(nn.Module):
         else:
             # Evaluate in chunks to avoid `RuntimeError: CUDA error: invalid configuration argument.`
             # Chunks of 2**16 and up cause an error.
-            # x = torch.empty_like(q)
-            # for i in range(0, qkv.size(0), chunk_size):
-            #     qc = q[i : i + chunk_size]
-            #     kc = k[i : i + chunk_size]
-            #     vc = v[i : i + chunk_size]
-            #     chunk = F.scaled_dot_product_attention(qc, kc, vc, **attn_kwargs)
-            #     x[i : i + chunk_size].copy_(chunk)
             x = torch.empty((qkv.size(0), self.num_heads, qkv.size(1), self.head_dim), dtype=qkv.dtype, device=qkv.device)
             for i in range(0, qkv.size(0), chunk_size):
                 qkv_chunk = qkv[i:i+chunk_size]
