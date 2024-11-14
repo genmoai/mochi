@@ -502,6 +502,7 @@ class FourierFeatures(nn.Module):
         Returns:
             h: Output tensor. Shape: [B, (1 + 2 * num_freqs) * C, T, H, W]
         """
+        assert inputs.dtype == torch.float32, f"Fourier features must be computed in float32 to avoid artifacts."
         return add_fourier_features(inputs, self.start, self.stop, self.step)
 
 
