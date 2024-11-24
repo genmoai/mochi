@@ -30,17 +30,17 @@ from torch.distributed.fsdp.wrap import (
 from transformers import T5EncoderModel, T5Tokenizer
 from transformers.models.t5.modeling_t5 import T5Block
 
-import genmo.mochi_preview.dit.joint_model.context_parallel as cp
-import genmo.mochi_preview.vae.cp_conv as cp_conv
-from genmo.lib.progress import get_new_progress_bar, progress_bar
-from genmo.lib.utils import Timer
-from genmo.mochi_preview.vae.models import (
+import src.genmo.mochi_preview.dit.joint_model.context_parallel as cp
+import src.genmo.mochi_preview.vae.cp_conv as cp_conv
+from src.genmo.lib.progress import get_new_progress_bar, progress_bar
+from src.genmo.lib.utils import Timer
+from src.genmo.mochi_preview.vae.models import (
     Decoder,
     decode_latents,
     decode_latents_tiled_full,
     decode_latents_tiled_spatial,
 )
-from genmo.mochi_preview.vae.vae_stats import dit_latents_to_vae_latents
+from src.genmo.mochi_preview.vae.vae_stats import dit_latents_to_vae_latents
 
 
 def linear_quadratic_schedule(num_steps, threshold_noise, linear_steps=None):
@@ -122,7 +122,7 @@ class T5ModelFactory(ModelFactory):
 class DitModelFactory(ModelFactory):
     def __init__(self, *, model_path: str, model_dtype: str, attention_mode: Optional[str] = None):
         if attention_mode is None:
-            from genmo.lib.attn_imports import flash_varlen_qkvpacked_attn  # type: ignore
+            from src.genmo.lib.attn_imports import flash_varlen_qkvpacked_attn  # type: ignore
 
             attention_mode = "sdpa" if flash_varlen_qkvpacked_attn is None else "flash"
         print(f"Attention mode: {attention_mode}")
@@ -132,7 +132,7 @@ class DitModelFactory(ModelFactory):
 
     def get_model(self, *, local_rank, device_id, world_size):
         # TODO(ved): Set flag for torch.compile
-        from genmo.mochi_preview.dit.joint_model.asymm_models_joint import (
+        from src.genmo.mochi_preview.dit.joint_model.asymm_models_joint import (
             AsymmDiTJoint,
         )
 

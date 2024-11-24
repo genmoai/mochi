@@ -7,11 +7,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
 
-import genmo.mochi_preview.dit.joint_model.context_parallel as cp
-from genmo.lib.progress import get_new_progress_bar
-from genmo.mochi_preview.vae.cp_conv import cp_pass_frames, gather_all_frames
-from genmo.mochi_preview.vae.latent_dist import LatentDistribution
-import genmo.mochi_preview.vae.cp_conv as cp_conv
+import src.genmo.mochi_preview.dit.joint_model.context_parallel as cp
+from src.genmo.lib.progress import get_new_progress_bar
+from src.genmo.mochi_preview.vae.cp_conv import cp_pass_frames, gather_all_frames
+from src.genmo.mochi_preview.vae.latent_dist import LatentDistribution
+import src.genmo.mochi_preview.vae.cp_conv as cp_conv
 
 
 def cast_tuple(t, length=1):

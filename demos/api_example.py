@@ -3,9 +3,9 @@ import sys
 from pathlib import Path
 from textwrap import dedent
 
-from genmo.lib.progress import progress_bar
-from genmo.lib.utils import save_video
-from genmo.mochi_preview.pipelines import (
+from src.genmo.lib.progress import progress_bar
+from src.genmo.lib.utils import save_video
+from src.genmo.mochi_preview.pipelines import (
     DecoderModelFactory,
     DitModelFactory,
     MochiSingleGPUPipeline,

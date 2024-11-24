@@ -6,7 +6,7 @@ import time
 import numpy as np
 from PIL import Image
 
-from genmo.lib.progress import get_new_progress_bar
+from src.genmo.lib.progress import get_new_progress_bar
 
 
 class Timer:
@@ -29,7 +29,6 @@ class Timer:
         def __init__(self, outer, name):
             self.outer = outer  # Reference to the Timer instance
             self.name = name
-            self.start_time = None
 
         def __enter__(self):
             self.start_time = time.perf_counter()

@@ -4,7 +4,7 @@ import torch
 import torch.distributed as dist
 import torch.nn.functional as F
 
-import genmo.mochi_preview.dit.joint_model.context_parallel as cp
+import src.genmo.mochi_preview.dit.joint_model.context_parallel as cp
 
 
 def cast_tuple(t, length=1):
