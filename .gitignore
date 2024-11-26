@@ -7,3 +7,4 @@ genmo.egg-info
 outputs
 build
 .ruff_cache
+.vscode
