@@ -47,5 +47,9 @@ You can now use the MochiLora class to generate videos from a prompt. The `main`
 ```bash
 modal run main
 ```
+or with more parameters: 
+```bash
+modal run main lora-path="/finetunes/my_mochi_lora/model_1000.lora.safetensors" prompt="A pristine snowglobe featuring a winter scene sits peacefully. The glass begins to crumble into fine powder, as the entire sphere deteriorates into sparkling dust that drifts outward." 
+```
 
-You're free to modify the `lora_path` variable in the entrypoint if you want to point to different LoRA weights.
+See modal run main --help for all inference options.
