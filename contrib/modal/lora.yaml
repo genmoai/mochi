@@ -1,0 +1,59 @@
+init_checkpoint_path: /weights/dit.safetensors
+checkpoint_dir: /finetunes/my_mochi_lora
+train_data_dir: /videos_prepared
+attention_mode: sdpa
+single_video_mode: false # Useful for debugging whether your model can learn a single video
+
+# You only need this if you're using wandb
+wandb:
+  # project: mochi_1_lora
+  # name: ${checkpoint_dir}
+  # group: null
+
+optimizer:
+  lr: 2e-4
+  weight_decay: 0.01
+
+model:
+  type: lora
+  kwargs:
+    # Apply LoRA to the QKV projection and the output projection of the attention block.
+    qkv_proj_lora_rank: 16
+    qkv_proj_lora_alpha: 16
+    qkv_proj_lora_dropout: 0.
+    qkv_proj_lora_mask: [true, true, true]
+    out_proj_lora_rank: 16
+    out_proj_lora_alpha: 16
+    out_proj_lora_dropout: 0.
+
+training:
+  model_dtype: bf16
+  warmup_steps: 200
+  num_qkv_checkpoint: 48
+  num_ff_checkpoint: 48
+  num_post_attn_checkpoint: 48
+  num_steps: 2000
+  save_interval: 200
+  caption_dropout: 0.1
+  grad_clip: 0.0
+  save_safetensors: true
+
+# Used for generating samples during training to monitor progress ...
+sample:
+   interval: 200
+   output_dir: ${checkpoint_dir}/samples
+   decoder_path: /weights/decoder.safetensors
+   prompts:
+      - A pristine snowglobe featuring a winter scene sits peacefully. The glass begins to crumble into fine powder, as the entire sphere deteriorates into sparkling dust that drifts outward. The fake snow mingles with the crystalline particles, creating a glittering cloud captured in high-speed photography.
+      - A vintage pocket watch ticks quietly on an antique desk. Its brass casing starts to deteriorate, turning to fine metallic powder that lifts into the air. The gears and springs fragment into microscopic particles, each piece breaking down into a shimmering bronze dust that hangs suspended. The scene is richly detailed with warm, brass tones.
+      - A cello is propped up against a wall, a single spotlight illuminating it. The wooden surface begins to decay into fine sawdust, the instrument gradually breaking apart as its form disintegrates into a cloud of earthen particles. The strings unravel into delicate fibers that float amidst the swirling wooden dust. The scene is vibrant and colorful.
+      - A graphics card sits inside an oven, heatwaves around it. The silicon and metal components begin to break down at a molecular level, deteriorating into a dark cloud of fine metallic and mineral dust that hangs suspended in the heated air. The scene is darkly lit, high contrast, with a focus on the suspended particles.
+      - A delicate porcelain teacup sits on a marble countertop. The ceramic structure begins to crumble into a fine, chalk-like powder, breaking down into countless microscopic white particles that drift upward in graceful patterns. The scene is bright and crisp with dramatic lighting illuminating the cloud of porcelain dust.
+   seed: 12345
+   kwargs:
+     height: 480
+     width: 848
+     num_frames: 37
+     num_inference_steps: 64
+     sigma_schedule_python_code: "linear_quadratic_schedule(64, 0.025)"
+     cfg_schedule_python_code: "[6.0] * 64"
