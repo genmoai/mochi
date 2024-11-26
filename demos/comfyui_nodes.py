@@ -1,5 +1,6 @@
 #! /usr/bin/env python
 
+import os
 import sys
 import click
 import gradio as gr
@@ -45,10 +46,24 @@ with gr.Blocks() as demo:
 @click.command()
 @click.option("--model_dir", required=True, help="Path to the model directory.")
 @click.option("--cpu_offload", is_flag=True, help="Whether to offload model to CPU")
+@click.option("--gpu_id", default="0", help="GPU ID to use (default: 0). Use 'cpu' to force CPU.")
+@click.option("--host", default="0.0.0.0", help="Host to run the server on (default: 0.0.0.0). Use 'localhost' for local access only.")
 @click.option("--port", default=7860, help="Port to run the server on")
-def launch(model_dir, cpu_offload, port):
+def launch(model_dir, cpu_offload, gpu_id, host, port):
+    # Set the GPU to use
+    if gpu_id.lower() == "cpu":
+        os.environ["CUDA_VISIBLE_DEVICES"] = ""  # Force CPU usage
+        print("Using CPU for computation.")
+    else:
+        os.environ["CUDA_VISIBLE_DEVICES"] = gpu_id  # Set the specified GPU
+        print(f"Using GPU {gpu_id} for computation.")
+
+    # Configure the model
     configure_model(model_dir, cpu_offload)
-    demo.launch(server_name="0.0.0.0", server_port=port)
+
+    # Launch the Gradio app
+    print(f"Launching server on {host}:{port}")
+    demo.launch(server_name=host, server_port=port)
 
 
 if __name__ == "__main__":
