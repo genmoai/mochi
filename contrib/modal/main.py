@@ -1,19 +1,19 @@
 import modal
 from pathlib import Path
 
+# Creating our Modal App
 app = modal.App("mochi-finetune")
 
-USERNAME = "genmoai"
-
-REPOSITORY = "mochi"
-CLONE_CMD = f"git clone https://github.com/{USERNAME}/{REPOSITORY}.git"
-
-# Volumes for data, intermediate data, and produced weights
+# Creating volumes for data, intermediate data, and produced weights
 videos_volume = modal.Volume.from_name("mochi-tune-videos", create_if_missing=True)
 videos_prepared_volume = modal.Volume.from_name("mochi-tune-videos-prepared", create_if_missing=True)
 weights_volume = modal.Volume.from_name("mochi-tune-weights", create_if_missing=True)
 finetunes_volume = modal.Volume.from_name("mochi-tune-finetunes", create_if_missing=True)
 outputs_volume = modal.Volume.from_name("mochi-tune-outputs", create_if_missing=True)
+
+USERNAME = "genmoai"
+REPOSITORY = "mochi"
+CLONE_CMD = f"git clone https://github.com/{USERNAME}/{REPOSITORY}.git"
 
 # Building our container image
 base_img = (
