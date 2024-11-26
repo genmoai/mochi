@@ -100,7 +100,7 @@ video = pipeline(
 
 We provide [an easy-to-use trainer](demos/fine_tuner/README.md) that allows you to build LoRA fine-tunes of Mochi on your own videos. The model can be fine-tuned on one H100 or A100 80GB GPU.
 
-We also provide a [Modal example](contrib/modal/readme.md) for finetuning Mochi on Modal GPUs.
+We also provide a [Modal script](contrib/modal/readme.md) for finetuning Mochi on Modal GPUs.
 
 ## Model Architecture
 
