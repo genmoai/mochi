@@ -1,5 +1,6 @@
 import os
 from typing import Dict, List, Optional, Tuple
+import warnings
 
 import torch
 import torch.nn as nn
@@ -8,12 +9,14 @@ from einops import rearrange
 from torch.nn.attention import sdpa_kernel
 
 import genmo.mochi_preview.dit.joint_model.context_parallel as cp
+from genmo.lib.attn_imports import flash_varlen_attn, sage_attn, sdpa_attn_ctx
 from genmo.mochi_preview.dit.joint_model.layers import (
     FeedForward,
     PatchEmbed,
     RMSNorm,
     TimestepEmbedder,
 )
+from genmo.mochi_preview.dit.joint_model.lora import LoraLinear
 from genmo.mochi_preview.dit.joint_model.mod_rmsnorm import modulated_rmsnorm
 from genmo.mochi_preview.dit.joint_model.residual_tanh_gated_rmsnorm import (
     residual_tanh_gated_rmsnorm,
@@ -27,13 +30,17 @@ from genmo.mochi_preview.dit.joint_model.utils import (
     AttentionPool,
     modulate,
     pad_and_split_xy,
-    unify_streams,
 )
 
 COMPILE_FINAL_LAYER = os.environ.get("COMPILE_DIT") == "1"
 COMPILE_MMDIT_BLOCK = os.environ.get("COMPILE_DIT") == "1"
 
-from genmo.lib.attn_imports import comfy_attn, flash_varlen_qkvpacked_attn, sage_attn, sdpa_attn_ctx
+
+def ck(fn, *args, enabled=True, **kwargs) -> torch.Tensor:
+    if enabled:
+        return torch.utils.checkpoint.checkpoint(fn, *args, **kwargs, use_reentrant=False)
+
+    return fn(*args, **kwargs)
 
 
 class AsymmetricAttention(nn.Module):
@@ -49,6 +56,14 @@ class AsymmetricAttention(nn.Module):
         attention_mode: str = "flash",
         softmax_scale: Optional[float] = None,
         device: Optional[torch.device] = None,
+        # Disable LoRA by default ...
+        qkv_proj_lora_rank: int = 0,
+        qkv_proj_lora_alpha: int = 0,
+        qkv_proj_lora_dropout: float = 0.0,
+        qkv_proj_lora_mask: List[bool] = [False, False, False],
+        out_proj_lora_rank: int = 0,
+        out_proj_lora_alpha: int = 0,
+        out_proj_lora_dropout: float = 0.0,
     ):
         super().__init__()
         self.attention_mode = attention_mode
@@ -63,9 +78,23 @@ class AsymmetricAttention(nn.Module):
 
         # Input layers.
         self.qkv_bias = qkv_bias
-        self.qkv_x = nn.Linear(dim_x, 3 * dim_x, bias=qkv_bias, device=device)
-        # Project text features to match visual features (dim_y -> dim_x)
-        self.qkv_y = nn.Linear(dim_y, 3 * dim_x, bias=qkv_bias, device=device)
+        if all(qkv_proj_lora_mask):
+            # All Q, K and V projections have LoRA, so use simpler layer.
+            qkv_lora_kwargs = dict(
+                out_features=3 * dim_x,
+                bias=qkv_bias,
+                device=device,
+                r=qkv_proj_lora_rank,
+                lora_alpha=qkv_proj_lora_alpha,
+                lora_dropout=qkv_proj_lora_dropout,
+            )
+            self.qkv_x = LoraLinear(dim_x, **qkv_lora_kwargs)
+            # Project text features to match visual features (dim_y -> dim_x)
+            self.qkv_y = LoraLinear(dim_y, **qkv_lora_kwargs)
+        else:
+            raise NotImplementedError(
+                f"LoRA on a subset of Q, K and V projections is not implemented, "
+                f"but got qkv_proj_lora_mask={qkv_proj_lora_mask}")
 
         # Query and key normalization for stability.
         assert qk_norm
@@ -75,8 +104,18 @@ class AsymmetricAttention(nn.Module):
         self.k_norm_y = RMSNorm(self.head_dim, device=device)
 
         # Output layers. y features go back down from dim_x -> dim_y.
-        self.proj_x = nn.Linear(dim_x, dim_x, bias=out_bias, device=device)
-        self.proj_y = nn.Linear(dim_x, dim_y, bias=out_bias, device=device) if update_y else nn.Identity()
+        proj_lora_kwargs = dict(
+            bias=out_bias,
+            device=device,
+            r=out_proj_lora_rank,
+            lora_alpha=out_proj_lora_alpha,
+            lora_dropout=out_proj_lora_dropout,
+        )
+        self.proj_x = LoraLinear(
+            dim_x, dim_x, **proj_lora_kwargs)
+        self.proj_y = LoraLinear(
+            dim_x, dim_y, **proj_lora_kwargs
+        ) if update_y else nn.Identity()
 
     def run_qkv_y(self, y):
         cp_rank, cp_size = cp.get_cp_rank_size()
@@ -94,11 +133,14 @@ class AsymmetricAttention(nn.Module):
 
         qkv_y = qkv_y.view(qkv_y.size(0), qkv_y.size(1), 3, local_heads, self.head_dim)
         q_y, k_y, v_y = qkv_y.unbind(2)
+
+        q_y = self.q_norm_y(q_y)
+        k_y = self.k_norm_y(k_y)
         return q_y, k_y, v_y
 
     def prepare_qkv(
         self,
-        x: torch.Tensor,  # (B, N, dim_x)
+        x: torch.Tensor,  # (B, M, dim_x)
         y: torch.Tensor,  # (B, L, dim_y)
         *,
         scale_x: torch.Tensor,
@@ -106,20 +148,14 @@ class AsymmetricAttention(nn.Module):
         rope_cos: torch.Tensor,
         rope_sin: torch.Tensor,
         valid_token_indices: torch.Tensor,
+        max_seqlen_in_batch: int,
     ):
-        # Pre-norm for visual features
-        x = modulated_rmsnorm(x, scale_x)  # (B, M, dim_x) where M = N / cp_group_size
-
         # Process visual features
+        x = modulated_rmsnorm(x, scale_x)  # (B, M, dim_x) where M = N / cp_group_size
         qkv_x = self.qkv_x(x)  # (B, M, 3 * dim_x)
         assert qkv_x.dtype == torch.bfloat16
-        qkv_x = cp.all_to_all_collect_tokens(qkv_x, self.num_heads)  # (3, B, N, local_h, head_dim)
 
-        # Process text features
-        y = modulated_rmsnorm(y, scale_y)  # (B, L, dim_y)
-        q_y, k_y, v_y = self.run_qkv_y(y)  # (B, L, local_heads, head_dim)
-        q_y = self.q_norm_y(q_y)
-        k_y = self.k_norm_y(k_y)
+        qkv_x = cp.all_to_all_collect_tokens(qkv_x, self.num_heads)  # (3, B, N, local_h, head_dim)
 
         # Split qkv_x into q, k, v
         q_x, k_x, v_x = qkv_x.unbind(0)  # (B, N, local_h, head_dim)
@@ -128,122 +164,187 @@ class AsymmetricAttention(nn.Module):
         k_x = self.k_norm_x(k_x)
         k_x = apply_rotary_emb_qk_real(k_x, rope_cos, rope_sin)
 
-        # Unite streams
-        qkv = unify_streams(
-            q_x,
-            k_x,
-            v_x,
-            q_y,
-            k_y,
-            v_y,
-            valid_token_indices,
-        )
+        # Concatenate streams
+        B, N, num_heads, head_dim = q_x.size()
+        D = num_heads * head_dim
 
-        return qkv
+        # Process text features
+        if B == 1:
+            text_seqlen = max_seqlen_in_batch - N
+            if text_seqlen > 0:
+                y = y[:, :text_seqlen]  # Remove padding tokens.
+                y = modulated_rmsnorm(y, scale_y)  # (B, L, dim_y)
+                q_y, k_y, v_y = self.run_qkv_y(y)  # (B, L, local_heads, head_dim)
 
-    def flash_attention(self, qkv, cu_seqlens, max_seqlen_in_batch, total, local_dim):
-        with torch.autocast("cuda", enabled=False):
-            out: torch.Tensor = flash_varlen_qkvpacked_attn(
-                qkv,
-                cu_seqlens=cu_seqlens,
-                max_seqlen=max_seqlen_in_batch,
+                q = torch.cat([q_x, q_y], dim=1)
+                k = torch.cat([k_x, k_y], dim=1)
+                v = torch.cat([v_x, v_y], dim=1)
+            else:
+                q, k, v = q_x, k_x, v_x
+        else:
+            y = modulated_rmsnorm(y, scale_y)  # (B, L, dim_y)
+            q_y, k_y, v_y = self.run_qkv_y(y)  # (B, L, local_heads, head_dim)
+
+            indices = valid_token_indices[:, None].expand(-1, D)
+            q = torch.cat([q_x, q_y], dim=1).view(-1, D).gather(0, indices)  # (total, D)
+            k = torch.cat([k_x, k_y], dim=1).view(-1, D).gather(0, indices)  # (total, D)
+            v = torch.cat([v_x, v_y], dim=1).view(-1, D).gather(0, indices)  # (total, D)
+
+        q = q.view(-1, num_heads, head_dim)
+        k = k.view(-1, num_heads, head_dim)
+        v = v.view(-1, num_heads, head_dim)
+        return q, k, v
+
+    @torch.autocast("cuda", enabled=False)
+    def flash_attention(self, q, k, v, cu_seqlens, max_seqlen_in_batch, total, local_dim):
+        out: torch.Tensor = flash_varlen_attn(
+            q, k, v,
+            cu_seqlens_q=cu_seqlens,
+            cu_seqlens_k=cu_seqlens,
+            max_seqlen_q=max_seqlen_in_batch,
+            max_seqlen_k=max_seqlen_in_batch,
+            dropout_p=0.0,
+            softmax_scale=self.softmax_scale,
+        )  # (total, local_heads, head_dim)
+        return out.view(total, local_dim)
+
+    def sdpa_attention(self, q, k, v):
+        with sdpa_attn_ctx(training=self.training):
+            out = F.scaled_dot_product_attention(
+                q, k, v,
+                attn_mask=None,
                 dropout_p=0.0,
-                softmax_scale=self.softmax_scale,
-            )  # (total, local_heads, head_dim)
-            return out.view(total, local_dim)
+                is_causal=False,
+            )
+            return out
 
-    def sdpa_attention(self, qkv):
-        q, k, v = rearrange(qkv, "(b s) t h d -> t b h s d", b=1)
-        with torch.autocast("cuda", enabled=False):
-            with sdpa_attn_ctx():
-                out = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=0.0, is_causal=False)
-                return rearrange(out, "b h s d -> s (b h d)")
+    @torch.autocast("cuda", enabled=False)
+    def sage_attention(self, q, k, v):
+        return sage_attn(q, k, v, attn_mask=None, dropout_p=0.0, is_causal=False)
 
-    def sage_attention(self, qkv):
-        q, k, v = rearrange(qkv, "(b s) t h d -> t b h s d", b=1)
-        with torch.autocast("cuda", enabled=False):
-            out = sage_attn(q, k, v, attn_mask=None, dropout_p=0.0, is_causal=False)
-            return rearrange(out, "b h s d -> s (b h d)")
-
-    def comfy_attention(self, qkv):
-        q, k, v = rearrange(qkv, "(b s) t h d -> t b h s d", b=1)
-        with torch.autocast("cuda", enabled=False):
-            out = comfy_attn(q, k, v, heads=self.num_heads, skip_reshape=True)
-            return out.squeeze(0)
-
-    @torch.compiler.disable()
     def run_attention(
         self,
-        qkv: torch.Tensor,  # (total <= B * (N + L), 3, local_heads, head_dim)
+        q: torch.Tensor,  # (total <= B * (N + L), num_heads, head_dim)
+        k: torch.Tensor,  # (total <= B * (N + L), num_heads, head_dim)
+        v: torch.Tensor,  # (total <= B * (N + L), num_heads, head_dim)
         *,
         B: int,
-        L: int,
-        M: int,
-        cu_seqlens: torch.Tensor,
-        max_seqlen_in_batch: int,
-        valid_token_indices: torch.Tensor,
+        cu_seqlens: Optional[torch.Tensor] = None,
+        max_seqlen_in_batch: Optional[int] = None,
     ):
         _, cp_size = cp.get_cp_rank_size()
-        N = cp_size * M
         assert self.num_heads % cp_size == 0
         local_heads = self.num_heads // cp_size
         local_dim = local_heads * self.head_dim
-        total = qkv.size(0)
 
-        if self.attention_mode != "flash":
-            assert B == 1, f"Non-flash attention only supports batch size 1, got {B}"
+        # Check shapes
+        assert q.ndim == 3 and k.ndim == 3 and v.ndim == 3
+        total = q.size(0)
+        assert k.size(0) == total and v.size(0) == total
 
         if self.attention_mode == "flash":
-            out = self.flash_attention(qkv, cu_seqlens, max_seqlen_in_batch, total, local_dim)
-        elif self.attention_mode == "sdpa":
-            out = self.sdpa_attention(qkv)
-        elif self.attention_mode == "sage":
-            out = self.sage_attention(qkv)
-        elif self.attention_mode == "comfy":
-            out = self.comfy_attention(qkv)
+            out = self.flash_attention(
+                q, k, v, cu_seqlens, max_seqlen_in_batch, total, local_dim)  # (total, local_dim)
+        else:
+            assert B == 1, \
+                f"Non-flash attention mode {self.attention_mode} only supports batch size 1, got {B}"
 
-        x, y = pad_and_split_xy(out, valid_token_indices, B, N, L, qkv.dtype)
-        assert x.size() == (B, N, local_dim)
+            q = rearrange(q, "(b s) h d -> b h s d", b=B)
+            k = rearrange(k, "(b s) h d -> b h s d", b=B)
+            v = rearrange(v, "(b s) h d -> b h s d", b=B)
+
+            if self.attention_mode == "sdpa":
+                out = self.sdpa_attention(q, k, v)  # (B, local_heads, seq_len, head_dim)
+            elif self.attention_mode == "sage":
+                out = self.sage_attention(q, k, v)  # (B, local_heads, seq_len, head_dim)
+            else:
+                raise ValueError(f"Unknown attention mode: {self.attention_mode}")
+
+            out = rearrange(out, "b h s d -> (b s) (h d)")
+
+        return out
+
+    def post_attention(
+        self,
+        out: torch.Tensor,
+        B: int,
+        M: int,
+        L: int,
+        dtype: torch.dtype,
+        valid_token_indices: torch.Tensor,
+    ):
+        """
+        Args:
+            out: (total <= B * (N + L), local_dim)
+            valid_token_indices: (total <= B * (N + L),)
+            B: Batch size
+            M: Number of visual tokens per context parallel rank
+            L: Number of text tokens
+            dtype: Data type of the input and output tensors
+
+        Returns:
+            x: (B, N, dim_x) tensor of visual tokens where N = M * cp_size
+            y: (B, L, dim_y) tensor of text token features
+        """
+        _, cp_size = cp.get_cp_rank_size()
+        local_heads = self.num_heads // cp_size
+        local_dim = local_heads * self.head_dim
+        N = M * cp_size
+
+        # Split sequence into visual and text tokens, adding back padding.
+        if B == 1:
+            out = out.view(B, -1, local_dim)
+            if out.size(1) > N:
+                x, y = torch.tensor_split(out, (N,), dim=1)  # (B, N, local_dim), (B, <= L, local_dim)
+                y = F.pad(y, (0, 0, 0, L - y.size(1)))  # (B, L, local_dim)
+            else:
+                # Empty prompt.
+                x, y = out, out.new_zeros(B, L, local_dim)
+        else:
+            x, y = pad_and_split_xy(out, valid_token_indices, B, N, L, dtype)
+        assert x.size() == (B, M, local_dim)
         assert y.size() == (B, L, local_dim)
 
+        # Communicate across context parallel ranks.
         x = x.view(B, N, local_heads, self.head_dim)
         x = cp.all_to_all_collect_heads(x)  # (B, M, dim_x = num_heads * head_dim)
-        x = self.proj_x(x)  # (B, M, dim_x)
-
         if cp.is_cp_active():
             y = cp.all_gather(y)  # (cp_size * B, L, local_heads * head_dim)
             y = rearrange(y, "(G B) L D -> B L (G D)", G=cp_size, D=local_dim)  # (B, L, dim_x)
-        y = self.proj_y(y)  # (B, L, dim_y)
+
+        x = self.proj_x(x)
+        y = self.proj_y(y)
         return x, y
 
     def forward(
         self,
-        x: torch.Tensor,  # (B, N, dim_x)
+        x: torch.Tensor,  # (B, M, dim_x)
         y: torch.Tensor,  # (B, L, dim_y)
         *,
         scale_x: torch.Tensor,  # (B, dim_x), modulation for pre-RMSNorm.
         scale_y: torch.Tensor,  # (B, dim_y), modulation for pre-RMSNorm.
         packed_indices: Dict[str, torch.Tensor] = None,
+        checkpoint_qkv: bool = False,
+        checkpoint_post_attn: bool = False,
         **rope_rotation,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Forward pass of asymmetric multi-modal attention.
 
         Args:
-            x: (B, N, dim_x) tensor for visual tokens
+            x: (B, M, dim_x) tensor of visual tokens
             y: (B, L, dim_y) tensor of text token features
             packed_indices: Dict with keys for Flash Attention
             num_frames: Number of frames in the video. N = num_frames * num_spatial_tokens
 
         Returns:
-            x: (B, N, dim_x) tensor of visual tokens after multi-modal attention
+            x: (B, M, dim_x) tensor of visual tokens after multi-modal attention
             y: (B, L, dim_y) tensor of text token features after multi-modal attention
         """
         B, L, _ = y.shape
         _, M, _ = x.shape
 
         # Predict a packed QKV tensor from visual and text features.
-        # Don't checkpoint the all_to_all.
-        qkv = self.prepare_qkv(
+        q, k, v = ck(self.prepare_qkv,
             x=x,
             y=y,
             scale_x=scale_x,
@@ -251,17 +352,25 @@ class AsymmetricAttention(nn.Module):
             rope_cos=rope_rotation.get("rope_cos"),
             rope_sin=rope_rotation.get("rope_sin"),
             valid_token_indices=packed_indices["valid_token_indices_kv"],
+            max_seqlen_in_batch=packed_indices["max_seqlen_in_batch_kv"],
+            enabled=checkpoint_qkv,
         )  # (total <= B * (N + L), 3, local_heads, head_dim)
 
-        x, y = self.run_attention(
-            qkv,
-            B=B,
-            L=L,
-            M=M,
+        # Self-attention is expensive, so don't checkpoint it.
+        out = self.run_attention(
+            q, k, v, B=B,
             cu_seqlens=packed_indices["cu_seqlens_kv"],
             max_seqlen_in_batch=packed_indices["max_seqlen_in_batch_kv"],
-            valid_token_indices=packed_indices["valid_token_indices_kv"],
         )
+
+        x, y = ck(self.post_attention,
+            out,
+            B=B, M=M, L=L,
+            dtype=v.dtype,
+            valid_token_indices=packed_indices["valid_token_indices_kv"],
+            enabled=checkpoint_post_attn,
+        )
+
         return x, y
 
 
@@ -326,6 +435,10 @@ class AsymmetricJointBlock(nn.Module):
         x: torch.Tensor,
         c: torch.Tensor,
         y: torch.Tensor,
+        # TODO: These could probably just go into attn_kwargs
+        checkpoint_ff: bool = False,
+        checkpoint_qkv: bool = False,
+        checkpoint_post_attn: bool = False,
         **attn_kwargs,
     ):
         """Forward pass of a block.
@@ -345,8 +458,8 @@ class AsymmetricJointBlock(nn.Module):
         c = F.silu(c)
         mod_x = self.mod_x(c)
         scale_msa_x, gate_msa_x, scale_mlp_x, gate_mlp_x = mod_x.chunk(4, dim=1)
-
         mod_y = self.mod_y(c)
+
         if self.update_y:
             scale_msa_y, gate_msa_y, scale_mlp_y, gate_mlp_y = mod_y.chunk(4, dim=1)
         else:
@@ -358,19 +471,21 @@ class AsymmetricJointBlock(nn.Module):
             y,
             scale_x=scale_msa_x,
             scale_y=scale_msa_y,
+            checkpoint_qkv=checkpoint_qkv,
+            checkpoint_post_attn=checkpoint_post_attn,
             **attn_kwargs,
         )
 
         assert x_attn.size(1) == N
         x = residual_tanh_gated_rmsnorm(x, x_attn, gate_msa_x)
+
         if self.update_y:
             y = residual_tanh_gated_rmsnorm(y, y_attn, gate_msa_y)
 
         # MLP block.
-        x = self.ff_block_x(x, scale_mlp_x, gate_mlp_x)
+        x = ck(self.ff_block_x, x, scale_mlp_x, gate_mlp_x, enabled=checkpoint_ff)
         if self.update_y:
-            y = self.ff_block_y(y, scale_mlp_y, gate_mlp_y)
-
+            y = ck(self.ff_block_y, y, scale_mlp_y, gate_mlp_y, enabled=checkpoint_ff)  # type: ignore
         return x, y
 
     def ff_block_x(self, x, scale_x, gate_x):
@@ -519,38 +634,34 @@ class AsymmDiTJoint(nn.Module):
     ):
         """Prepare input and conditioning embeddings."""
 
-        with torch.profiler.record_function("x_emb_pe"):
-            # Visual patch embeddings with positional encoding.
-            T, H, W = x.shape[-3:]
-            pH, pW = H // self.patch_size, W // self.patch_size
-            x = self.embed_x(x)  # (B, N, D), where N = T * H * W / patch_size ** 2
-            assert x.ndim == 3
-            B = x.size(0)
+        # Visual patch embeddings with positional encoding.
+        T, H, W = x.shape[-3:]
+        pH, pW = H // self.patch_size, W // self.patch_size
+        x = self.embed_x(x)  # (B, N, D), where N = T * H * W / patch_size ** 2
+        assert x.ndim == 3
+        B = x.size(0)
 
-        with torch.profiler.record_function("rope_cis"):
-            # Construct position array of size [N, 3].
-            # pos[:, 0] is the frame index for each location,
-            # pos[:, 1] is the row index for each location, and
-            # pos[:, 2] is the column index for each location.
-            N = T * pH * pW
-            assert x.size(1) == N
-            pos = create_position_matrix(T, pH=pH, pW=pW, device=x.device, dtype=torch.float32)  # (N, 3)
-            rope_cos, rope_sin = compute_mixed_rotation(
-                freqs=self.pos_frequencies, pos=pos
-            )  # Each are (N, num_heads, dim // 2)
+        # Construct position array of size [N, 3].
+        # pos[:, 0] is the frame index for each location,
+        # pos[:, 1] is the row index for each location, and
+        # pos[:, 2] is the column index for each location.
+        N = T * pH * pW
+        assert x.size(1) == N
+        pos = create_position_matrix(T, pH=pH, pW=pW, device=x.device, dtype=torch.float32)  # (N, 3)
+        rope_cos, rope_sin = compute_mixed_rotation(
+            freqs=self.pos_frequencies, pos=pos
+        )  # Each are (N, num_heads, dim // 2)
 
-        with torch.profiler.record_function("t_emb"):
-            # Global vector embedding for conditionings.
-            c_t = self.t_embedder(1 - sigma)  # (B, D)
+        # Global vector embedding for conditionings.
+        c_t = self.t_embedder(1 - sigma)  # (B, D)
 
-        with torch.profiler.record_function("t5_pool"):
-            # Pool T5 tokens using attention pooler
-            # Note y_feat[1] contains T5 token features.
-            assert (
-                t5_feat.size(1) == self.t5_token_length
-            ), f"Expected L={self.t5_token_length}, got {t5_feat.shape} for y_feat."
-            t5_y_pool = self.t5_y_embedder(t5_feat, t5_mask)  # (B, D)
-            assert t5_y_pool.size(0) == B, f"Expected B={B}, got {t5_y_pool.shape} for t5_y_pool."
+        # Pool T5 tokens using attention pooler
+        # Note y_feat[1] contains T5 token features.
+        assert (
+            t5_feat.size(1) == self.t5_token_length
+        ), f"Expected L={self.t5_token_length}, got {t5_feat.shape} for y_feat."
+        t5_y_pool = self.t5_y_embedder(t5_feat, t5_mask)  # (B, D)
+        assert t5_y_pool.size(0) == B, f"Expected B={B}, got {t5_y_pool.shape} for t5_y_pool."
 
         c = c_t + t5_y_pool
 
@@ -567,6 +678,9 @@ class AsymmDiTJoint(nn.Module):
         packed_indices: Dict[str, torch.Tensor] = None,
         rope_cos: torch.Tensor = None,
         rope_sin: torch.Tensor = None,
+        num_ff_checkpoint: int = 0,
+        num_qkv_checkpoint: int = 0,
+        num_post_attn_checkpoint: int = 0,
     ):
         """Forward pass of DiT.
 
@@ -577,7 +691,10 @@ class AsymmDiTJoint(nn.Module):
             y_mask: List((B, L) boolean tensor indicating which tokens are not padding)
             packed_indices: Dict with keys for Flash Attention. Result of compute_packed_indices.
         """
-        B, _, T, H, W = x.shape
+        _, _, T, H, W = x.shape
+
+        if self.pos_frequencies.dtype != torch.float32:
+            warnings.warn(f"pos_frequencies dtype {self.pos_frequencies.dtype} != torch.float32")
 
         # Use EFFICIENT_ATTENTION backend for T5 pooling, since we have a mask.
         # Have to call sdpa_kernel outside of a torch.compile region.
@@ -606,6 +723,9 @@ class AsymmDiTJoint(nn.Module):
                 rope_cos=rope_cos,
                 rope_sin=rope_sin,
                 packed_indices=packed_indices,
+                checkpoint_ff=i < num_ff_checkpoint,
+                checkpoint_qkv=i < num_qkv_checkpoint,
+                checkpoint_post_attn=i < num_post_attn_checkpoint,
             )  # (B, M, D), (B, L, D)
         del y_feat  # Final layers don't use dense text features.
 

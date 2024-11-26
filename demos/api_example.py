@@ -13,7 +13,7 @@ from genmo.mochi_preview.pipelines import (
     linear_quadratic_schedule,
 )
 
-MOCHI_DIR =  sys.argv[1]
+MOCHI_DIR = sys.argv[1]
 assert Path(MOCHI_DIR).exists(), f"Model directory {MOCHI_DIR} does not exist."
 pipeline = MochiSingleGPUPipeline(
     text_encoder_factory=T5ModelFactory(),
@@ -23,7 +23,7 @@ pipeline = MochiSingleGPUPipeline(
         model_stats_path=f"{MOCHI_DIR}/vae_stats.json",
     ),
     cpu_offload=True,
-    decode_type="tiled_full"
+    decode_type="tiled_full",
 )
 
 PROMPT = dedent("""

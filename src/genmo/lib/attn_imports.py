@@ -2,34 +2,28 @@ from contextlib import contextmanager
 
 import torch
 
+
 try:
-    from flash_attn import flash_attn_varlen_qkvpacked_func as flash_varlen_qkvpacked_attn
+    from flash_attn import flash_attn_varlen_func as flash_varlen_attn
 except ImportError:
-    flash_varlen_qkvpacked_attn = None
+    flash_varlen_attn = None
 
 try:
     from sageattention import sageattn as sage_attn
 except ImportError:
     sage_attn = None
 
-try:
-    from comfy.ldm.modules.attention import comfy_optimized_attention as comfy_attn
-except ImportError:
-    comfy_attn = None
-
-
 from torch.nn.attention import SDPBackend, sdpa_kernel
 
-backends = []
-if torch.cuda.get_device_properties(0).major < 7:
-    backends.append(SDPBackend.MATH)
+training_backends = [SDPBackend.FLASH_ATTENTION, SDPBackend.EFFICIENT_ATTENTION]
+eval_backends = list(training_backends)
 if torch.cuda.get_device_properties(0).major >= 9.0:
-    backends.append(SDPBackend.CUDNN_ATTENTION)
-else:
-    backends.append(SDPBackend.EFFICIENT_ATTENTION)
-
+    # Enable fast CuDNN attention on Hopper.
+    # This gives NaN on the backward pass for some reason,
+    # so only use it for evaluation.
+    eval_backends.append(SDPBackend.CUDNN_ATTENTION)
 
 @contextmanager
-def sdpa_attn_ctx():
-    with sdpa_kernel(backends):
+def sdpa_attn_ctx(training: bool = False):
+    with sdpa_kernel(training_backends if training else eval_backends):
         yield

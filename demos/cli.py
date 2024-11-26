@@ -20,18 +20,20 @@ from genmo.mochi_preview.pipelines import (
 
 pipeline = None
 model_dir_path = None
+lora_path = None
 num_gpus = torch.cuda.device_count()
 cpu_offload = False
 
 
-def configure_model(model_dir_path_, cpu_offload_):
-    global model_dir_path, cpu_offload
+def configure_model(model_dir_path_, lora_path_, cpu_offload_):
+    global model_dir_path, lora_path, cpu_offload
     model_dir_path = model_dir_path_
+    lora_path = lora_path_
     cpu_offload = cpu_offload_
 
 
 def load_model():
-    global num_gpus, pipeline, model_dir_path
+    global num_gpus, pipeline, model_dir_path, lora_path
     if pipeline is None:
         MOCHI_DIR = model_dir_path
         print(f"Launching with {num_gpus} GPUs. If you want to force single GPU mode use CUDA_VISIBLE_DEVICES=0.")
@@ -39,19 +41,24 @@ def load_model():
         kwargs = dict(
             text_encoder_factory=T5ModelFactory(),
             dit_factory=DitModelFactory(
-                model_path=f"{MOCHI_DIR}/dit.safetensors", 
-                model_dtype="bf16"
+                model_path=f"{MOCHI_DIR}/dit.safetensors",
+                lora_path=lora_path,
+                model_dtype="bf16",
             ),
             decoder_factory=DecoderModelFactory(
                 model_path=f"{MOCHI_DIR}/decoder.safetensors",
             ),
         )
         if num_gpus > 1:
+            assert not lora_path, f"Lora not supported in multi-GPU mode"
             assert not cpu_offload, "CPU offload not supported in multi-GPU mode"
             kwargs["world_size"] = num_gpus
         else:
             kwargs["cpu_offload"] = cpu_offload
-            kwargs["decode_type"] = "tiled_full"
+            kwargs["decode_type"] = "tiled_spatial"
+            kwargs["fast_init"] = not lora_path
+            kwargs["strict_load"] = not lora_path
+            kwargs["decode_args"] = dict(overlap=8)
         pipeline = klass(**kwargs)
 
 
@@ -103,12 +110,12 @@ def generate_video(
         os.makedirs("outputs", exist_ok=True)
         output_path = os.path.join("outputs", f"output_{int(time.time())}.mp4")
 
-
         save_video(final_frames, output_path)
         json_path = os.path.splitext(output_path)[0] + ".json"
         json.dump(args, open(json_path, "w"), indent=4)
 
         return output_path
+
 
 from textwrap import dedent
 
@@ -122,6 +129,7 @@ The even lighting enhances the vibrant colors and creates a fresh,
 inviting atmosphere.
 """)
 
+
 @click.command()
 @click.option("--prompt", default=DEFAULT_PROMPT, help="Prompt for video generation.")
 @click.option("--negative_prompt", default="", help="Negative prompt for video generation.")
@@ -130,13 +138,14 @@ inviting atmosphere.
 @click.option("--num_frames", default=163, type=int, help="Number of frames.")
 @click.option("--seed", default=1710977262, type=int, help="Random seed.")
 @click.option("--cfg_scale", default=6.0, type=float, help="CFG Scale.")
-@click.option("--num_steps", default=100, type=int, help="Number of inference steps.")
+@click.option("--num_steps", default=64, type=int, help="Number of inference steps.")
 @click.option("--model_dir", required=True, help="Path to the model directory.")
+@click.option("--lora_path", required=False, help="Path to the lora file.")
 @click.option("--cpu_offload", is_flag=True, help="Whether to offload model to CPU")
 def generate_cli(
-    prompt, negative_prompt, width, height, num_frames, seed, cfg_scale, num_steps, model_dir, cpu_offload
+    prompt, negative_prompt, width, height, num_frames, seed, cfg_scale, num_steps, model_dir, lora_path, cpu_offload
 ):
-    configure_model(model_dir, cpu_offload)
+    configure_model(model_dir, lora_path, cpu_offload)
     output = generate_video(
         prompt,
         negative_prompt,

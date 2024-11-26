@@ -104,6 +104,7 @@ class FeedForward(nn.Module):
         self.w2 = nn.Linear(hidden_size, in_features, bias=False, device=device)
 
     def forward(self, x):
+        # assert self.w1.weight.dtype == torch.bfloat16, f"FFN weight dtype {self.w1.weight.dtype} != bfloat16"
         x, gate = self.w1(x).chunk(2, dim=-1)
         x = self.w2(F.silu(x) * gate)
         return x
@@ -171,6 +172,8 @@ class RMSNorm(torch.nn.Module):
         self.register_parameter("bias", None)
 
     def forward(self, x):
+        # assert self.weight.dtype == torch.float32, f"RMSNorm weight dtype {self.weight.dtype} != float32"
+
         x_fp32 = x.float()
         x_normed = x_fp32 * torch.rsqrt(x_fp32.pow(2).mean(-1, keepdim=True) + self.eps)
         return (x_normed * self.weight).type_as(x)
