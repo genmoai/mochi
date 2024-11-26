@@ -42,7 +42,7 @@ Samples will be generated in `finetunes/my_mochi_lora/samples` every 200 steps.
 ### 4. Use your fine-tuned weights to generate videos!
 Update `--lora_path` to the path of your fine-tuned weights and run:
 ```python
-python3 ./demos/cli.py --model_dir weights/ --lora_path finetunes/my_mochi_lora/model_2000.lora.safetensors --num_frames 37 --prompt "A delicate porcelain teacup sits on a marble countertop. The teacup suddenly shatters into hundreds of white ceramic shards that scatter through the air. The scene is bright and crisp with dramatic lighting."
+python3 ./demos/cli.py --model_dir weights/ --lora_path finetunes/my_mochi_lora/model_2000.lora.safetensors --num_frames 37 --cpu_offload --prompt "A delicate porcelain teacup sits on a marble countertop. The teacup suddenly shatters into hundreds of white ceramic shards that scatter through the air. The scene is bright and crisp with dramatic lighting."
 ```
 
 You can increase the number of frames to generate a longer video. Finally, share your creations with the community by uploading your LoRA and sample videos to Hugging Face.
