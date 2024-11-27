@@ -11,7 +11,7 @@ from cli import configure_model, generate_video
 with gr.Blocks(css=".gradio-container {font-family: 'Arial', sans-serif; background-color: #f9f9f9;}") as demo:
     gr.Markdown(
         """
-        <h1 style="text-align: center; color: #4CAF50;">🎥 Video Generator</h1>
+        <h1 style="text-align: center; color: #4CAF50;">🎥 Mochi Video Generator</h1>
         <p style="text-align: center;">Generate stunning videos with ease!</p>
         """,
         elem_id="header",
