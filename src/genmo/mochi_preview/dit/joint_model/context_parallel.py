@@ -1,3 +1,5 @@
+from typing import Tuple
+
 import torch
 import torch.distributed as dist
 from einops import rearrange
@@ -8,8 +10,9 @@ _CONTEXT_PARALLEL_GROUP_SIZE = None
 _CONTEXT_PARALLEL_GROUP_RANKS = None
 
 
-def get_cp_rank_size():
+def get_cp_rank_size() -> Tuple[int, int]:
     if _CONTEXT_PARALLEL_GROUP:
+        assert isinstance(_CONTEXT_PARALLEL_RANK, int) and isinstance(_CONTEXT_PARALLEL_GROUP_SIZE, int)
         return _CONTEXT_PARALLEL_RANK, _CONTEXT_PARALLEL_GROUP_SIZE
     else:
         return 0, 1

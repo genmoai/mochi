@@ -12,21 +12,16 @@ from genmo.mochi_preview.vae.models import Encoder, add_fourier_features
 
 
 @click.command()
-@click.argument('mochi_dir', type=str)
-@click.argument('video_path', type=click.Path(exists=True))
+@click.argument("mochi_dir", type=str)
+@click.argument("video_path", type=click.Path(exists=True))
 def reconstruct(mochi_dir, video_path):
-
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
 
     decoder_factory = DecoderModelFactory(
         model_path=f"{mochi_dir}/decoder.safetensors",
     )
-    decoder = decoder_factory.get_model(
-        world_size=1,
-        device_id=0,
-        local_rank=0
-    )
+    decoder = decoder_factory.get_model(world_size=1, device_id=0, local_rank=0)
 
     config = dict(
         prune_bottlenecks=[False, False, False, False, False],
@@ -34,7 +29,7 @@ def reconstruct(mochi_dir, video_path):
         affine=True,
         bias=True,
         input_is_conv_1x1=True,
-        padding_mode="replicate"
+        padding_mode="replicate",
     )
 
     # Create VAE encoder
@@ -53,9 +48,9 @@ def reconstruct(mochi_dir, video_path):
     encoder.load_state_dict(load_file(f"{mochi_dir}/encoder.safetensors"))
     encoder.eval()
 
-    video, _, metadata = torchvision.io.read_video(video_path, output_format='THWC')
+    video, _, metadata = torchvision.io.read_video(video_path, output_format="THWC")
     fps = metadata["video_fps"]
-    video = rearrange(video, 't h w c -> c t h w')
+    video = rearrange(video, "t h w c -> c t h w")
     video = video.unsqueeze(0)
     assert video.dtype == torch.uint8
     # Convert to float in [-1, 1] range.
@@ -78,7 +73,7 @@ def reconstruct(mochi_dir, video_path):
     t0 = time.time()
     save_video(frames.cpu().numpy()[0], f"{video_path}.recon.mp4", fps=fps)
     print(f"Time to save: {time.time() - t0:.2f}s")
-    
+
 
 if __name__ == "__main__":
     reconstruct()

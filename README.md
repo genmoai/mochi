@@ -5,6 +5,11 @@ A state of the art video generation model by [Genmo](https://genmo.ai).
 
 https://github.com/user-attachments/assets/4d268d02-906d-4cb0-87cc-f467f1497108
 
+## News
+
+- ⭐ **November 26, 2024**: Added support for [LoRA fine-tuning](demos/fine_tuner/README.md)
+- ⭐ **November 5, 2024**: Consumer-GPU support for Mochi [natively in ComfyUI](https://x.com/ComfyUI/status/1853838184012251317)
+
 ## Overview
 
 Mochi 1 preview is an open state-of-the-art video generation model with high-fidelity motion and strong prompt adherence in preliminary evaluation. This model dramatically closes the gap between closed and open video generation systems. We’re releasing the model under a permissive Apache 2.0 license. Try this model for free on [our playground](https://genmo.ai/play).
@@ -32,9 +37,9 @@ You will also need to install [FFMPEG](https://www.ffmpeg.org/) to turn your out
 
 ## Download Weights
 
-Use [download_weights.py](scripts/download_weights.py) to download the model + decoder to a local directory. Use it like this:
-```
-python3 ./scripts/download_weights.py <path_to_downloaded_directory>
+Use [download_weights.py](scripts/download_weights.py) to download the model + VAE to a local directory. Use it like this:
+```bash
+python3 ./scripts/download_weights.py weights/
 ```
 
 Or, directly download the weights from [Hugging Face](https://huggingface.co/genmo/mochi-1-preview/tree/main) or via `magnet:?xt=urn:btih:441da1af7a16bcaa4f556964f8028d7113d21cbb&dn=weights&tr=udp://tracker.opentrackr.org:1337/announce` to a folder on your computer.
@@ -44,16 +49,14 @@ Or, directly download the weights from [Hugging Face](https://huggingface.co/gen
 Start the gradio UI with
 
 ```bash
-python3 ./demos/gradio_ui.py --model_dir "<path_to_downloaded_directory>"
+python3 ./demos/gradio_ui.py --model_dir weights/
 ```
 
 Or generate videos directly from the CLI with
 
 ```bash
-python3 ./demos/cli.py --model_dir "<path_to_downloaded_directory>"
+python3 ./demos/cli.py --model_dir weights/
 ```
-
-Replace `<path_to_downloaded_directory>` with the path to your model directory.
 
 ## API
 
@@ -71,13 +74,13 @@ from genmo.mochi_preview.pipelines import (
 pipeline = MochiSingleGPUPipeline(
     text_encoder_factory=T5ModelFactory(),
     dit_factory=DitModelFactory(
-        model_path=f"{MOCHI_DIR}/dit.safetensors", model_dtype="bf16"
+        model_path=f"weights/dit.safetensors", model_dtype="bf16"
     ),
     decoder_factory=DecoderModelFactory(
-        model_path=f"{MOCHI_DIR}/decoder.safetensors",
+        model_path=f"weights/decoder.safetensors",
     ),
     cpu_offload=True,
-    decode_type="tiled_full",
+    decode_type="tiled_spatial",
 )
 
 video = pipeline(
@@ -86,13 +89,17 @@ video = pipeline(
     num_frames=31,
     num_inference_steps=64,
     sigma_schedule=linear_quadratic_schedule(64, 0.025),
-    cfg_schedule=[4.5] * 64,
+    cfg_schedule=[6.0] * 64,
     batch_cfg=False,
     prompt="your favorite prompt here ...",
     negative_prompt="",
     seed=12345,
 )
 ```
+
+## Fine-tuning with LoRA
+
+We provide [an easy-to-use trainer](demos/fine_tuner/README.md) that allows you to build LoRA fine-tunes of Mochi on your own videos. The model can be fine-tuned on one H100 or A100 80GB GPU.
 
 ## Model Architecture
 
@@ -123,8 +130,10 @@ Genmo video models are general text-to-video diffusion models that inherently re
 Under the research preview, Mochi 1 is a living and evolving checkpoint. There are a few known limitations. The initial release generates videos at 480p today. In some edge cases with extreme motion, minor warping and distortions can also occur. Mochi 1 is also optimized for photorealistic styles so does not perform well with animated content. We also anticipate that the community will fine-tune the model to suit various aesthetic preferences.
 
 ## Related Work
-- [ComfyUI-MochiWrapper](https://github.com/kijai/ComfyUI-MochiWrapper) adds ComfyUI support for Mochi. The integration of Pytorch's SDPA attention was taken from their repository.
+- [ComfyUI-MochiWrapper](https://github.com/kijai/ComfyUI-MochiWrapper) adds ComfyUI support for Mochi. The integration of Pytorch's SDPA attention was based on their repository.
+- [ComfyUI-MochiEdit](https://github.com/logtd/ComfyUI-MochiEdit) adds ComfyUI nodes for video editing, such as object insertion and restyling.
 - [mochi-xdit](https://github.com/xdit-project/mochi-xdit) is a fork of this repository and improve the parallel inference speed with [xDiT](https://github.com/xdit-project/xdit).
+- [Modal script](contrib/modal/readme.md) for fine-tuning Mochi on Modal GPUs.
 
 
 ## BibTeX

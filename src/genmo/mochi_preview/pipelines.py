@@ -13,6 +13,7 @@ import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import repeat
+from safetensors import safe_open
 from safetensors.torch import load_file
 from torch import nn
 from torch.distributed.fsdp import (
@@ -20,9 +21,7 @@ from torch.distributed.fsdp import (
     MixedPrecision,
     ShardingStrategy,
 )
-from torch.distributed.fsdp import (
-    FullyShardedDataParallel as FSDP,
-)
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp.wrap import (
     lambda_auto_wrap_policy,
     transformer_auto_wrap_policy,
@@ -31,16 +30,24 @@ from transformers import T5EncoderModel, T5Tokenizer
 from transformers.models.t5.modeling_t5 import T5Block
 
 import genmo.mochi_preview.dit.joint_model.context_parallel as cp
-import genmo.mochi_preview.vae.cp_conv as cp_conv
 from genmo.lib.progress import get_new_progress_bar, progress_bar
 from genmo.lib.utils import Timer
 from genmo.mochi_preview.vae.models import (
     Decoder,
+    Encoder,
     decode_latents,
     decode_latents_tiled_full,
     decode_latents_tiled_spatial,
 )
 from genmo.mochi_preview.vae.vae_stats import dit_latents_to_vae_latents
+
+
+def load_to_cpu(p, weights_only=True):
+    if p.endswith(".safetensors"):
+        return load_file(p)
+    else:
+        assert p.endswith(".pt")
+        return torch.load(p, map_location="cpu", weights_only=weights_only)
 
 
 def linear_quadratic_schedule(num_steps, threshold_noise, linear_steps=None):
@@ -90,6 +97,8 @@ class ModelFactory(ABC):
 
     @abstractmethod
     def get_model(self, *, local_rank: int, device_id: Union[int, Literal["cpu"]], world_size: int) -> Any:
+        assert isinstance(device_id, int) or device_id == "cpu", "device_id must be an integer or 'cpu'"
+        # FSDP does not work when the model is on the CPU
         if device_id == "cpu":
             assert world_size == 1, "CPU offload only supports single-GPU inference"
 
@@ -120,24 +129,60 @@ class T5ModelFactory(ModelFactory):
 
 
 class DitModelFactory(ModelFactory):
-    def __init__(self, *, model_path: str, model_dtype: str, attention_mode: Optional[str] = None):
+    def __init__(
+        self, *,
+        model_path: str,
+        model_dtype: str,
+        lora_path: Optional[str] = None,
+        attention_mode: Optional[str] = None
+    ):
+        # Infer attention mode if not specified
         if attention_mode is None:
-            from genmo.lib.attn_imports import flash_varlen_qkvpacked_attn  # type: ignore
-
-            attention_mode = "sdpa" if flash_varlen_qkvpacked_attn is None else "flash"
+            from genmo.lib.attn_imports import flash_varlen_attn  # type: ignore
+            attention_mode = "sdpa" if flash_varlen_attn is None else "flash"
         print(f"Attention mode: {attention_mode}")
+
         super().__init__(
-            model_path=model_path, model_dtype=model_dtype, attention_mode=attention_mode
+            model_path=model_path,
+            lora_path=lora_path,
+            model_dtype=model_dtype,
+            attention_mode=attention_mode
         )
 
-    def get_model(self, *, local_rank, device_id, world_size):
-        # TODO(ved): Set flag for torch.compile
-        from genmo.mochi_preview.dit.joint_model.asymm_models_joint import (
-            AsymmDiTJoint,
-        )
+    def get_model(
+        self,
+        *,
+        local_rank,
+        device_id,
+        world_size,
+        model_kwargs=None,
+        patch_model_fns=None,
+        strict_load=True,
+        load_checkpoint=True,
+        fast_init=True,
+    ):
+        from genmo.mochi_preview.dit.joint_model.asymm_models_joint import AsymmDiTJoint
 
-        model: nn.Module = torch.nn.utils.skip_init(
-            AsymmDiTJoint,
+        if not model_kwargs:
+            model_kwargs = {}
+
+        lora_sd = None
+        lora_path = self.kwargs["lora_path"]
+        if lora_path is not None:
+            if lora_path.endswith(".safetensors"):
+                lora_sd = {}
+                with safe_open(lora_path, framework="pt") as f:
+                    for k in f.keys():
+                        lora_sd[k] = f.get_tensor(k)
+                    lora_kwargs = json.loads(f.metadata()["kwargs"])
+                    print(f"Loaded LoRA kwargs: {lora_kwargs}")
+            else:
+                lora = load_to_cpu(lora_path, weights_only=False)
+                lora_sd, lora_kwargs = lora["state_dict"], lora["kwargs"]
+
+            model_kwargs.update(cast(dict, lora_kwargs))
+
+        model_args = dict(
             depth=48,
             patch_size=2,
             num_heads=24,
@@ -156,18 +201,42 @@ class DitModelFactory(ModelFactory):
             t5_token_length=256,
             rope_theta=10000.0,
             attention_mode=self.kwargs["attention_mode"],
+            **model_kwargs,
         )
 
-        if local_rank == 0:
-            # FSDP syncs weights from rank 0 to all other ranks
-            model.load_state_dict(load_file(self.kwargs["model_path"]))
+        if fast_init:
+            model: nn.Module = torch.nn.utils.skip_init(AsymmDiTJoint, **model_args)
+        else:
+            model: nn.Module = AsymmDiTJoint(**model_args)
+
+        for fn in patch_model_fns or []:
+            model = fn(model)
+
+        # FSDP syncs weights from rank 0 to all other ranks
+        if local_rank == 0 and load_checkpoint:
+            model_path = self.kwargs["model_path"]
+            sd = load_to_cpu(model_path)
+
+            # Load the state dictionary and capture the return value
+            load_result = model.load_state_dict(sd, strict=strict_load)
+            if not strict_load:
+                # Print mismatched keys
+                missing_keys = [k for k in load_result.missing_keys if ".lora_" not in k]
+                if missing_keys:
+                    print(f"Missing keys from {model_path}: {missing_keys}")
+                if load_result.unexpected_keys:
+                    print(f"Unexpected keys from {model_path}: {load_result.unexpected_keys}")
+
+            if lora_sd:
+                model.load_state_dict(lora_sd, strict=strict_load) # type: ignore
 
         if world_size > 1:
             assert self.kwargs["model_dtype"] == "bf16", "FP8 is not supported for multi-GPU inference"
+
             model = setup_fsdp_sync(
                 model,
                 device_id=device_id,
-                param_dtype=torch.bfloat16,
+                param_dtype=torch.float32,
                 auto_wrap_policy=partial(
                     lambda_auto_wrap_policy,
                     lambda_fn=lambda m: m in model.blocks,
@@ -208,9 +277,52 @@ class DecoderModelFactory(ModelFactory):
         return decoder
 
 
-def get_conditioning(tokenizer, encoder, device, batch_inputs, *, prompt: str, negative_prompt: str):
+class EncoderModelFactory(ModelFactory):
+    def __init__(self, *, model_path: str):
+        super().__init__(model_path=model_path)
+
+    def get_model(self, *, local_rank, device_id, world_size):
+        # TODO(ved): Set flag for torch.compile
+        # TODO(ved): Use skip_init
+
+        # We don't FSDP the encoder b/c it is small
+        encoder = Encoder(
+            in_channels=15,
+            base_channels=64,
+            channel_multipliers=[1, 2, 4, 6],
+            num_res_blocks=[3, 3, 4, 6, 3],
+            latent_dim=12,
+            temporal_reductions=[1, 2, 3],
+            spatial_reductions=[2, 2, 2],
+            prune_bottlenecks=[False, False, False, False, False],
+            has_attentions=[False, True, True, True, True],
+            affine=True,
+            bias=True,
+            input_is_conv_1x1=True,
+            padding_mode="replicate",
+        )
+        state_dict = load_file(self.kwargs["model_path"])
+        encoder.load_state_dict(state_dict, strict=True)
+        device = torch.device(f"cuda:{device_id}") if isinstance(device_id, int) else "cpu"
+        encoder.eval().to(device)
+        return encoder
+
+
+def get_conditioning(
+    tokenizer: T5Tokenizer,
+    encoder: Encoder,
+    device: torch.device,
+    batch_inputs: bool,
+    *,
+    prompt: str,
+    negative_prompt: str,
+):
     if batch_inputs:
-        return dict(batched=get_conditioning_for_prompts(tokenizer, encoder, device, [prompt, negative_prompt]))
+        return dict(
+            batched=get_conditioning_for_prompts(
+                tokenizer, encoder, device, [prompt, negative_prompt]
+            )
+        )
     else:
         cond_input = get_conditioning_for_prompts(tokenizer, encoder, device, [prompt])
         null_input = get_conditioning_for_prompts(tokenizer, encoder, device, [negative_prompt])
@@ -373,7 +485,11 @@ def sample_model(device, dit, conditioning, **args):
 
 
 @contextmanager
-def move_to_device(model: nn.Module, target_device):
+def move_to_device(model: nn.Module, target_device, *, enabled=True):
+    if not enabled:
+        yield
+        return
+
     og_device = next(model.parameters()).device
     if og_device == target_device:
         print(f"move_to_device is a no-op model is already on {target_device}")
@@ -401,6 +517,8 @@ class MochiSingleGPUPipeline:
         cpu_offload: Optional[bool] = False,
         decode_type: str = "full",
         decode_args: Optional[Dict[str, Any]] = None,
+        fast_init=True,
+        strict_load=True
     ):
         self.device = torch.device("cuda:0")
         self.tokenizer = t5_tokenizer(text_encoder_factory.model_dir)
@@ -416,7 +534,7 @@ class MochiSingleGPUPipeline:
                 world_size=1,
             )
         with t("load_dit"):
-            self.dit = dit_factory.get_model(local_rank=0, device_id=init_id, world_size=1)
+            self.dit = dit_factory.get_model(local_rank=0, device_id=init_id, world_size=1, fast_init=fast_init, strict_load=strict_load) # type: ignore
         with t("load_vae"):
             self.decoder = decoder_factory.get_model(local_rank=0, device_id=init_id, world_size=1)
         t.print_stats()
@@ -427,29 +545,47 @@ class MochiSingleGPUPipeline:
                 f"Max memory reserved: {torch.cuda.max_memory_reserved() / 1024**3:.2f} GB"
             )
             print_max_memory()
+
             with move_to_device(self.text_encoder, self.device):
                 conditioning = get_conditioning(
-                    self.tokenizer,
-                    self.text_encoder,
-                    self.device,
-                    batch_cfg,
+                    tokenizer=self.tokenizer,
+                    encoder=self.text_encoder,
+                    device=self.device,
+                    batch_inputs=batch_cfg,
                     prompt=prompt,
                     negative_prompt=negative_prompt,
                 )
             print_max_memory()
+
             with move_to_device(self.dit, self.device):
                 latents = sample_model(self.device, self.dit, conditioning, **kwargs)
             print_max_memory()
+
             with move_to_device(self.decoder, self.device):
-                frames = (
-                    decode_latents_tiled_full(self.decoder, latents, **self.decode_args)
-                    if self.decode_type == "tiled_full"
-                    else decode_latents_tiled_spatial(self.decoder, latents, **self.decode_args)
-                    if self.decode_type == "tiled_spatial"
-                    else decode_latents(self.decoder, latents)
-                )
+                if self.decode_type == "tiled_full":
+                    frames = decode_latents_tiled_full(
+                        self.decoder, latents, **self.decode_args)
+                elif self.decode_type == "tiled_spatial":
+                    frames = decode_latents_tiled_spatial(
+                        self.decoder, latents, **self.decode_args,
+                        num_tiles_w=4, num_tiles_h=2)
+                else:
+                    frames = decode_latents(self.decoder, latents)
             print_max_memory()
             return frames.cpu().numpy()
+
+
+def cast_dit(model, dtype):
+    for name, module in model.named_modules():
+        if isinstance(module, nn.Linear):
+            assert any(
+                n in name for n in ["mlp", "t5", "mod_", "attn.qkv_", "attn.proj_", "final_layer"]
+            ), f"Unexpected linear layer: {name}"
+            module.to(dtype=dtype)
+        elif isinstance(module, nn.Conv2d):
+            assert "x_embedder.proj" in name, f"Unexpected conv2d layer: {name}"
+            module.to(dtype=dtype)
+    return model
 
 
 ### ALL CODE BELOW HERE IS FOR MULTI-GPU MODE ###

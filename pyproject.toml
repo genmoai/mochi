@@ -6,11 +6,13 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "addict>=2.4.0",
+    "av==13.1.0",
     "click>=8.1.7",
     "einops>=0.8.0",
     "gradio>=3.36.1",
+    "moviepy==1.0.3",
     "omegaconf>=2.3.0",
-    "pillow>=11.0.0",
+    "pillow==9.5.0",
     "pyyaml>=6.0.2",
     "ray>=2.37.0",
     "sentencepiece>=0.2.0",

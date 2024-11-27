@@ -385,6 +385,7 @@ class Attention(nn.Module):
         if qkv.size(0) <= chunk_size:
             q, k, v = prepare_for_attention(qkv, self.head_dim, qk_norm=self.qk_norm)
             x = F.scaled_dot_product_attention(q, k, v, **attn_kwargs)  # [B, num_heads, t, head_dim]
+            assert x.size(0) == q.size(0)
         else:
             # Evaluate in chunks to avoid `RuntimeError: CUDA error: invalid configuration argument.`
             # Chunks of 2**16 and up cause an error.
@@ -393,9 +394,9 @@ class Attention(nn.Module):
                 qkv_chunk = qkv[i:i+chunk_size]
                 qc, kc, vc = prepare_for_attention(qkv_chunk, self.head_dim, qk_norm=self.qk_norm)
                 chunk = F.scaled_dot_product_attention(qc, kc, vc, **attn_kwargs)
+                assert chunk.size(0) == qc.size(0)
                 x[i:i+chunk_size].copy_(chunk)
 
-        assert x.size(0) == q.size(0)
         x = x.transpose(1, 2)  # [B, t, num_heads, head_dim]
         x = x.flatten(2)  # [B, t, num_heads * head_dim]
 
@@ -904,6 +905,7 @@ def normalize_decoded_frames(samples):
     frames = rearrange(samples, "b c t h w -> b t h w c")
     return frames
 
+
 @torch.inference_mode()
 def decode_latents_tiled_full(
     decoder,
@@ -1007,11 +1009,13 @@ def decode_latents_tiled_spatial(
     assert decoded is not None, f"Failed to decode latents with tiled spatial method"
     return normalize_decoded_frames(decoded)
 
+
 @torch.inference_mode()
 def decode_latents(decoder, z):
+    assert z.ndim == 5
     cp_rank, cp_size = cp.get_cp_rank_size()
     z = z.tensor_split(cp_size, dim=2)[cp_rank]  # split along temporal dim
     with torch.autocast("cuda", dtype=torch.bfloat16):
         samples = decoder(z)
-    samples = cp_conv.gather_all_frames(samples)
+    samples = gather_all_frames(samples)
     return normalize_decoded_frames(samples)
