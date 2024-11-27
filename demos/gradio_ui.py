@@ -59,13 +59,14 @@ with gr.Blocks(css=".gradio-container {font-family: 'Arial', sans-serif; backgro
 # Command-line interface with GPU, host, and port options
 @click.command()
 @click.option("--model_dir", required=True, help="Path to the model directory.")
+@click.option("--lora_path", required=False, help="Path to the lora file.")
 @click.option("--cpu_offload", is_flag=True, help="Whether to offload model to CPU.")
 @click.option("--gpu", default=None, help="Specify the GPU to use (e.g., 'cuda:0').")
 @click.option("--host", default="127.0.0.1", help="Host address for the Gradio app.")
 @click.option("--port", default=7860, help="Port number for the Gradio app.")
-def launch(model_dir, cpu_offload, gpu, host, port):
+def launch(model_dir, lora_path, cpu_offload, gpu, host, port):
     # Configure the model
-    configure_model(model_dir, cpu_offload, gpu=gpu)
+    configure_model(model_dir, lora_path, cpu_offload, gpu=gpu)
     
     # Launch the Gradio app
     demo.launch(server_name=host, server_port=port)
