@@ -21,7 +21,7 @@ base_img = (
     .apt_install("git", "ffmpeg", "bc", "zlib1g-dev", "libjpeg-dev", "wget")
     .run_commands(CLONE_CMD)
     .workdir(REPOSITORY)
-    .pip_install("setuptools", "wheel")
+    .pip_install("gdown", "setuptools", "wheel")
     .run_commands('pip install -e . --no-build-isolation')
 )
 
