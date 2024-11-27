@@ -25,11 +25,19 @@ num_gpus = torch.cuda.device_count()
 cpu_offload = False
 
 
-def configure_model(model_dir_path_, lora_path_, cpu_offload_):
+def configure_model(model_dir_path_, lora_path_, cpu_offload_, gpu=None):
     global model_dir_path, lora_path, cpu_offload
     model_dir_path = model_dir_path_
     lora_path = lora_path_
     cpu_offload = cpu_offload_
+
+    # Set the GPU device if specified
+    if gpu:
+        os.environ["CUDA_VISIBLE_DEVICES"] = gpu
+        print(f"Using GPU: {gpu}")
+    else:
+        print("Using default GPU configuration.")
+
 
 
 def load_model():
