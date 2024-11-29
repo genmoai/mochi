@@ -16,3 +16,4 @@ build
 wandb/
 *.err
 *.out
+*.MOV

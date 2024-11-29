@@ -1,12 +1,12 @@
 #! /usr/bin/env python3
 import os
 from pathlib import Path
+import traceback
 from typing import Optional
 
 import click
 import ray
 import torch
-import torch.distributed as dist
 import torchvision
 from einops import rearrange
 
@@ -18,46 +18,25 @@ from genmo.mochi_preview.pipelines import DecoderModelFactory, EncoderModelFacto
 from genmo.mochi_preview.vae.models import add_fourier_features, decode_latents
 
 
-class MultiGPUContext:
+class GPUContext:
     def __init__(
         self,
         *,
-        device_id,
-        local_rank,
-        world_size,
         encoder_factory: Optional[EncoderModelFactory] = None,
         decoder_factory: Optional[DecoderModelFactory] = None,
     ):
         t = Timer()
-        self.device = torch.device(f"cuda:{device_id}")
-        print(f"Initializing rank {local_rank+1}/{world_size}")
-        os.environ["MASTER_ADDR"] = "127.0.0.1"
-        os.environ["MASTER_PORT"] = "29500"
-        with t("init_process_group"):
-            dist.init_process_group(
-                "nccl",
-                rank=local_rank,
-                world_size=world_size,
-                device_id=self.device,  # force non-lazy init
-            )
-        pg = dist.group.WORLD
-        cp.set_cp_group(pg, list(range(world_size)), local_rank)
-        distributed_kwargs = dict(local_rank=local_rank, device_id=device_id, world_size=world_size)
-        self.world_size = world_size
-        self.local_rank = local_rank
+        self.device = torch.device(f"cuda")
         if encoder_factory is not None:
             with t("load_encoder"):
-                self.encoder = encoder_factory.get_model(**distributed_kwargs)
+                self.encoder = encoder_factory.get_model()
         if decoder_factory is not None:
             with t("load_decoder"):
-                self.decoder = decoder_factory.get_model(**distributed_kwargs)
+                self.decoder = decoder_factory.get_model()
         t.print_stats()
 
-    def run(self, *, fn, **kwargs):
-        return fn(self, **kwargs)
 
-
-def preprocess(ctx: MultiGPUContext, vid_path: Path, shape: str, reconstruct: bool):
+def preprocess(ctx: GPUContext, vid_path: Path, shape: str, reconstruct: bool):
     T, H, W = [int(s) for s in shape.split("x")]
     assert (T - 1) % 6 == 0, "Expected T to be 1 mod 6"
     video, _, metadata = torchvision.io.read_video(
@@ -85,39 +64,17 @@ def preprocess(ctx: MultiGPUContext, vid_path: Path, shape: str, reconstruct: bo
 
         ldist.mean = cp_conv.gather_all_frames(ldist.mean)
         ldist.logvar = cp_conv.gather_all_frames(ldist.logvar)
-        if ctx.local_rank == 0:
-            print(f"{og_shape} -> {ldist.mean.shape}")
-            torch.save(
-                dict(mean=ldist.mean, logvar=ldist.logvar),
-                vid_path.with_suffix(".latent.pt"),
-            )
+        print(f"{og_shape} -> {ldist.mean.shape}")
+        torch.save(
+            dict(mean=ldist.mean, logvar=ldist.logvar),
+            vid_path.with_suffix(".latent.pt"),
+        )
 
         if reconstruct:
             latents = ldist.sample()
             frames = decode_latents(ctx.decoder, latents)
             frames = frames.cpu().numpy()
             save_video(frames[0], str(vid_path.with_suffix(".recon.mp4")), fps=fps)
-
-
-class Preprocessor:
-    def __init__(self, world_size: int, encoder_path: Path, decoder_path: Path):
-        ray.init()
-        RemoteClass = ray.remote(MultiGPUContext)
-        self.ctxs = [
-            RemoteClass.options(num_gpus=1).remote(
-                encoder_factory=EncoderModelFactory(model_path=encoder_path),
-                decoder_factory=DecoderModelFactory(model_path=decoder_path),
-                device_id=0,
-                world_size=world_size,
-                local_rank=idx,
-            )
-            for idx in range(world_size)
-        ]
-        for ctx in self.ctxs:
-            ray.get(ctx.__ray_ready__.remote())
-
-    def __call__(self, **kwargs):
-        ray.get([ctx.run.remote(fn=preprocess, **kwargs) for ctx in self.ctxs])
 
 
 @click.command()
@@ -156,10 +113,9 @@ def batch_process(
         print(f"No MP4 files found in {videos_dir}")
         return
 
-    preproc = Preprocessor(
-        world_size=num_gpus,
-        encoder_path=os.path.join(model_dir, "encoder.safetensors"),
-        decoder_path=os.path.join(model_dir, "decoder.safetensors"),
+    preproc = GPUContext(
+        encoder_factory=EncoderModelFactory(model_path=os.path.join(model_dir, "encoder.safetensors")),
+        decoder_factory=DecoderModelFactory(model_path=os.path.join(model_dir, "decoder.safetensors")),
     )
     with progress_bar(type="ray_tqdm"):
         for idx, video_path in get_new_progress_bar((list(enumerate(sorted(video_paths))))):
@@ -173,14 +129,13 @@ def batch_process(
                     print(f"Skipping {video_path}")
                     continue
 
-                preproc(
+                preprocess(
+                    ctx=preproc,
                     vid_path=video_path,
                     shape=shape,
                     reconstruct=recon_interval != 0 and idx % recon_interval == 0,
                 )
             except Exception as e:
-                import traceback
-
                 traceback.print_exc()
                 print(f"Error processing {video_path}: {str(e)}")
 
