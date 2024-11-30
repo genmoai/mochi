@@ -49,14 +49,16 @@ Or, directly download the weights from [Hugging Face](https://huggingface.co/gen
 Start the gradio UI with
 
 ```bash
-python3 ./demos/gradio_ui.py --model_dir weights/
+python3 ./demos/gradio_ui.py --model_dir weights/ --cpu_offload
 ```
 
 Or generate videos directly from the CLI with
 
 ```bash
-python3 ./demos/cli.py --model_dir weights/
+python3 ./demos/cli.py --model_dir weights/ --cpu_offload
 ```
+
+If you have a fine-tuned LoRA in the safetensors format, you can add `--lora_path <path/to/my_mochi_lora.safetensors>` to either `gradio_ui.py` or `cli.py`.
 
 ## API
 
