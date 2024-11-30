@@ -91,7 +91,7 @@ class AsymmetricAttention(nn.Module):
             self.qkv_x = LoraLinear(dim_x, **qkv_lora_kwargs)
             # Project text features to match visual features (dim_y -> dim_x)
             self.qkv_y = LoraLinear(dim_y, **qkv_lora_kwargs)
-        else:
+        elif any(qkv_proj_lora_mask):
             raise NotImplementedError(
                 f"LoRA on a subset of Q, K and V projections is not implemented, "
                 f"but got qkv_proj_lora_mask={qkv_proj_lora_mask}")
