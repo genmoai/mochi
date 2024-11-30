@@ -62,8 +62,6 @@ def preprocess(ctx: GPUContext, vid_path: Path, shape: str, reconstruct: bool):
         with torch.autocast("cuda", dtype=torch.bfloat16):
             ldist = ctx.encoder(video)
 
-        ldist.mean = cp_conv.gather_all_frames(ldist.mean)
-        ldist.logvar = cp_conv.gather_all_frames(ldist.logvar)
         print(f"{og_shape} -> {ldist.mean.shape}")
         torch.save(
             dict(mean=ldist.mean, logvar=ldist.logvar),
