@@ -21,7 +21,6 @@ model:
     qkv_proj_lora_rank: 16
     qkv_proj_lora_alpha: 16
     qkv_proj_lora_dropout: 0.
-    qkv_proj_lora_mask: [true, true, true]
     out_proj_lora_rank: 16
     out_proj_lora_alpha: 16
     out_proj_lora_dropout: 0.

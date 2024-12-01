@@ -21,7 +21,7 @@ base_img = (
     .apt_install("git", "ffmpeg", "bc", "zlib1g-dev", "libjpeg-dev", "wget")
     .run_commands(CLONE_CMD)
     .workdir(REPOSITORY)
-    .pip_install("setuptools", "wheel")
+    .pip_install("gdown", "setuptools", "wheel")
     .run_commands('pip install -e . --no-build-isolation')
 )
 
@@ -78,6 +78,7 @@ def download_weights():
         "/videos_prepared": videos_prepared_volume,
         "/weights": weights_volume,
     },
+    timeout=30*MINUTES,
     gpu="H100"
 )
 def preprocess():
@@ -127,7 +128,7 @@ def finetune():
         "/finetunes": finetunes_volume,
         "/outputs": outputs_volume,
     },
-    timeout=20*MINUTES,
+    timeout=30*MINUTES,
     gpu="H100"
 )
 class MochiLora():

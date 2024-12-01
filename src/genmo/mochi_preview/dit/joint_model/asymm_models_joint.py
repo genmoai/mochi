@@ -60,7 +60,6 @@ class AsymmetricAttention(nn.Module):
         qkv_proj_lora_rank: int = 0,
         qkv_proj_lora_alpha: int = 0,
         qkv_proj_lora_dropout: float = 0.0,
-        qkv_proj_lora_mask: List[bool] = [False, False, False],
         out_proj_lora_rank: int = 0,
         out_proj_lora_alpha: int = 0,
         out_proj_lora_dropout: float = 0.0,
@@ -78,23 +77,16 @@ class AsymmetricAttention(nn.Module):
 
         # Input layers.
         self.qkv_bias = qkv_bias
-        if all(qkv_proj_lora_mask):
-            # All Q, K and V projections have LoRA, so use simpler layer.
-            qkv_lora_kwargs = dict(
-                out_features=3 * dim_x,
-                bias=qkv_bias,
-                device=device,
-                r=qkv_proj_lora_rank,
-                lora_alpha=qkv_proj_lora_alpha,
-                lora_dropout=qkv_proj_lora_dropout,
-            )
-            self.qkv_x = LoraLinear(dim_x, **qkv_lora_kwargs)
-            # Project text features to match visual features (dim_y -> dim_x)
-            self.qkv_y = LoraLinear(dim_y, **qkv_lora_kwargs)
-        else:
-            raise NotImplementedError(
-                f"LoRA on a subset of Q, K and V projections is not implemented, "
-                f"but got qkv_proj_lora_mask={qkv_proj_lora_mask}")
+        qkv_lora_kwargs = dict(
+            bias=qkv_bias,
+            device=device,
+            r=qkv_proj_lora_rank,
+            lora_alpha=qkv_proj_lora_alpha,
+            lora_dropout=qkv_proj_lora_dropout,
+        )
+        self.qkv_x = LoraLinear(dim_x, 3 * dim_x, **qkv_lora_kwargs)
+        # Project text features to match visual features (dim_y -> dim_x)
+        self.qkv_y = LoraLinear(dim_y, 3 * dim_x, **qkv_lora_kwargs)
 
         # Query and key normalization for stability.
         assert qk_norm
@@ -111,11 +103,8 @@ class AsymmetricAttention(nn.Module):
             lora_alpha=out_proj_lora_alpha,
             lora_dropout=out_proj_lora_dropout,
         )
-        self.proj_x = LoraLinear(
-            dim_x, dim_x, **proj_lora_kwargs)
-        self.proj_y = LoraLinear(
-            dim_x, dim_y, **proj_lora_kwargs
-        ) if update_y else nn.Identity()
+        self.proj_x = LoraLinear(dim_x, dim_x, **proj_lora_kwargs)
+        self.proj_y = LoraLinear(dim_x, dim_y, **proj_lora_kwargs) if update_y else nn.Identity()
 
     def run_qkv_y(self, y):
         cp_rank, cp_size = cp.get_cp_rank_size()

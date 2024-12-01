@@ -40,7 +40,6 @@ with gr.Blocks(css=".gradio-container {font-family: 'Arial', sans-serif; backgro
         num_inference_steps = gr.Number(label="Number of Inference Steps", value=200, precision=0)
     btn = gr.Button("🎬 Generate Video", elem_id="generate-btn")
     output = gr.Video(label="Generated Video")
-
     btn.click(
         generate_video,
         inputs=[
@@ -70,6 +69,7 @@ def launch(model_dir, lora_path, cpu_offload, gpu, host, port):
     
     # Launch the Gradio app
     demo.launch(server_name=host, server_port=port)
+
 
 
 if __name__ == "__main__":

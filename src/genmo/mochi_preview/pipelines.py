@@ -251,7 +251,7 @@ class DecoderModelFactory(ModelFactory):
     def __init__(self, *, model_path: str):
         super().__init__(model_path=model_path)
 
-    def get_model(self, *, local_rank, device_id, world_size):
+    def get_model(self, *, local_rank=0, device_id=0, world_size=1):
         # TODO(ved): Set flag for torch.compile
         # TODO(ved): Use skip_init
 
@@ -281,7 +281,7 @@ class EncoderModelFactory(ModelFactory):
     def __init__(self, *, model_path: str):
         super().__init__(model_path=model_path)
 
-    def get_model(self, *, local_rank, device_id, world_size):
+    def get_model(self, *, local_rank=0, device_id=0, world_size=1):
         # TODO(ved): Set flag for torch.compile
         # TODO(ved): Use skip_init
 
