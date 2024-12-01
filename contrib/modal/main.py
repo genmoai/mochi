@@ -78,6 +78,7 @@ def download_weights():
         "/videos_prepared": videos_prepared_volume,
         "/weights": weights_volume,
     },
+    timeout=20*MINUTES,
     gpu="H100"
 )
 def preprocess():
