@@ -291,7 +291,7 @@ class AsymmetricAttention(nn.Module):
                 x, y = out, out.new_zeros(B, L, local_dim)
         else:
             x, y = pad_and_split_xy(out, valid_token_indices, B, N, L, dtype)
-        assert x.size() == (B, M, local_dim)
+        assert x.size() == (B, N, local_dim)
         assert y.size() == (B, L, local_dim)
 
         # Communicate across context parallel ranks.

@@ -97,3 +97,7 @@ Settings tested on 1x H100 SXM:
   You can checkpoint up to 48 layers, saving memory at the cost of slower training.
 - If all else fails, reduce `num_frames` when processing your videos and in your YAML.
   You can fine-tune Mochi on shorter videos, and still generate longer videos at inference time.
+
+## Diffusers trainer
+
+The [Diffusers Python library](https://github.com/huggingface/diffusers) supports LoRA fine-tuning of Mochi 1 as well. Check out [this link](https://github.com/a-r-r-o-w/cogvideox-factory/tree/80d1150a0e233a1b2b98dd0367c06276989d049c/training/mochi-1) for more details. 
