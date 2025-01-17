@@ -1,4 +1,5 @@
 # Mochi 1
+
 [Blog](https://www.genmo.ai/blog) | [Hugging Face](https://huggingface.co/genmo/mochi-1-preview) | [Playground](https://www.genmo.ai/play) | [Careers](https://jobs.ashbyhq.com/genmo)
 
 A state of the art video generation model by [Genmo](https://genmo.ai).
@@ -19,8 +20,8 @@ Mochi 1 preview is an open state-of-the-art video generation model with high-fid
 Install using [uv](https://github.com/astral-sh/uv):
 
 ```bash
-git clone https://github.com/genmoai/models
-cd models 
+git clone https://github.com/genmoai/mochi
+cd mochi
 pip install uv
 uv venv .venv
 source .venv/bin/activate
@@ -29,7 +30,8 @@ uv pip install -e . --no-build-isolation
 ```
 
 If you want to install flash attention, you can use:
-```
+
+```bash
 uv pip install -e .[flash] --no-build-isolation
 ```
 
@@ -38,6 +40,7 @@ You will also need to install [FFMPEG](https://www.ffmpeg.org/) to turn your out
 ## Download Weights
 
 Use [download_weights.py](scripts/download_weights.py) to download the model + VAE to a local directory. Use it like this:
+
 ```bash
 python3 ./scripts/download_weights.py weights/
 ```
@@ -105,40 +108,46 @@ We provide [an easy-to-use trainer](demos/fine_tuner/README.md) that allows you 
 
 ## Model Architecture
 
-Mochi 1 represents a significant advancement in open-source video generation, featuring a 10 billion parameter diffusion model built on our novel Asymmetric Diffusion Transformer (AsymmDiT) architecture. Trained entirely from scratch, it is the largest video generative model ever openly released. And best of all, it’s a simple, hackable architecture. Additionally, we are releasing an inference harness that includes an efficient context parallel implementation. 
+Mochi 1 represents a significant advancement in open-source video generation, featuring a 10 billion parameter diffusion model built on our novel Asymmetric Diffusion Transformer (AsymmDiT) architecture. Trained entirely from scratch, it is the largest video generative model ever openly released. And best of all, it’s a simple, hackable architecture. Additionally, we are releasing an inference harness that includes an efficient context parallel implementation.
 
-Alongside Mochi, we are open-sourcing our video AsymmVAE. We use an asymmetric encoder-decoder structure to build an efficient high quality compression model. Our AsymmVAE causally compresses videos to a 128x smaller size, with an 8x8 spatial and a 6x temporal compression to a 12-channel latent space. 
+Alongside Mochi, we are open-sourcing our video AsymmVAE. We use an asymmetric encoder-decoder structure to build an efficient high quality compression model. Our AsymmVAE causally compresses videos to a 128x smaller size, with an 8x8 spatial and a 6x temporal compression to a 12-channel latent space.
 
 ### AsymmVAE Model Specs
-|Params <br> Count | Enc Base <br>  Channels | Dec Base <br> Channels |Latent <br> Dim | Spatial <br> Compression | Temporal <br> Compression | 
-|:--:|:--:|:--:|:--:|:--:|:--:|
-|362M   | 64  | 128  | 12   | 8x8   | 6x   | 
+
+| Params <br> Count | Enc Base <br> Channels | Dec Base <br> Channels | Latent <br> Dim | Spatial <br> Compression | Temporal <br> Compression |
+| :---------------: | :--------------------: | :--------------------: | :-------------: | :----------------------: | :-----------------------: |
+|       362M        |           64           |          128           |       12        |           8x8            |            6x             |
 
 An AsymmDiT efficiently processes user prompts alongside compressed video tokens by streamlining text processing and focusing neural network capacity on visual reasoning. AsymmDiT jointly attends to text and visual tokens with multi-modal self-attention and learns separate MLP layers for each modality, similar to Stable Diffusion 3. However, our visual stream has nearly 4 times as many parameters as the text stream via a larger hidden dimension. To unify the modalities in self-attention, we use non-square QKV and output projection layers. This asymmetric design reduces inference memory requirements.
 Many modern diffusion models use multiple pretrained language models to represent user prompts. In contrast, Mochi 1 simply encodes prompts with a single T5-XXL language model.
 
 ### AsymmDiT Model Specs
-|Params <br> Count | Num <br> Layers | Num <br> Heads | Visual <br> Dim | Text <br> Dim | Visual <br> Tokens | Text <br> Tokens | 
-|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
-|10B   | 48   | 24   | 3072   | 1536   | 44520   |   256   |
+
+| Params <br> Count | Num <br> Layers | Num <br> Heads | Visual <br> Dim | Text <br> Dim | Visual <br> Tokens | Text <br> Tokens |
+| :---------------: | :-------------: | :------------: | :-------------: | :-----------: | :----------------: | :--------------: |
+|        10B        |       48        |       24       |      3072       |     1536      |       44520        |       256        |
 
 ## Hardware Requirements
+
 The repository supports both multi-GPU operation (splitting the model across multiple graphics cards) and single-GPU operation, though it requires approximately 60GB VRAM when running on a single GPU. While ComfyUI can optimize Mochi to run on less than 20GB VRAM, this implementation prioritizes flexibility over memory efficiency. When using this repository, we recommend using at least 1 H100 GPU.
 
 ## Safety
+
 Genmo video models are general text-to-video diffusion models that inherently reflect the biases and preconceptions found in their training data. While steps have been taken to limit NSFW content, organizations should implement additional safety protocols and careful consideration before deploying these model weights in any commercial services or products.
 
 ## Limitations
+
 Under the research preview, Mochi 1 is a living and evolving checkpoint. There are a few known limitations. The initial release generates videos at 480p today. In some edge cases with extreme motion, minor warping and distortions can also occur. Mochi 1 is also optimized for photorealistic styles so does not perform well with animated content. We also anticipate that the community will fine-tune the model to suit various aesthetic preferences.
 
 ## Related Work
+
 - [ComfyUI-MochiWrapper](https://github.com/kijai/ComfyUI-MochiWrapper) adds ComfyUI support for Mochi. The integration of Pytorch's SDPA attention was based on their repository.
 - [ComfyUI-MochiEdit](https://github.com/logtd/ComfyUI-MochiEdit) adds ComfyUI nodes for video editing, such as object insertion and restyling.
 - [mochi-xdit](https://github.com/xdit-project/mochi-xdit) is a fork of this repository and improve the parallel inference speed with [xDiT](https://github.com/xdit-project/xdit).
 - [Modal script](contrib/modal/readme.md) for fine-tuning Mochi on Modal GPUs.
 
-
 ## BibTeX
+
 ```
 @misc{genmo2024mochi,
       title={Mochi 1},
@@ -146,6 +155,6 @@ Under the research preview, Mochi 1 is a living and evolving checkpoint. There a
       year={2024},
       publisher = {GitHub},
       journal = {GitHub repository},
-      howpublished={\url{https://github.com/genmoai/models}}
+      howpublished={\url{https://github.com/genmoai/mochi}}
 }
 ```
