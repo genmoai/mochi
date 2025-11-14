@@ -19,8 +19,8 @@ Mochi 1 preview is an open state-of-the-art video generation model with high-fid
 Install using [uv](https://github.com/astral-sh/uv):
 
 ```bash
-git clone https://github.com/genmoai/models
-cd models 
+git clone https://github.com/genmoai/mochi
+cd mochi
 pip install uv
 uv venv .venv
 source .venv/bin/activate
