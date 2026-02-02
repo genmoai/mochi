@@ -142,7 +142,7 @@ class AsymmetricAttention(nn.Module):
         # Process visual features
         x = modulated_rmsnorm(x, scale_x)  # (B, M, dim_x) where M = N / cp_group_size
         qkv_x = self.qkv_x(x)  # (B, M, 3 * dim_x)
-        assert qkv_x.dtype == torch.bfloat16
+        assert qkv_x.dtype in (torch.bfloat16, torch.float16), f"Expected bf16/fp16, got {qkv_x.dtype}"
 
         qkv_x = cp.all_to_all_collect_tokens(qkv_x, self.num_heads)  # (3, B, N, local_h, head_dim)
 
@@ -211,6 +211,17 @@ class AsymmetricAttention(nn.Module):
     def sage_attention(self, q, k, v):
         return sage_attn(q, k, v, attn_mask=None, dropout_p=0.0, is_causal=False)
 
+    def mps_flash_attention(self, q, k, v):
+        """MPS Flash Attention using mps-flash-attn library."""
+        try:
+            from mps_flash_attn import flash_attention
+            # mps_flash_attn expects (B, H, S, D) format
+            out = flash_attention(q, k, v, scale=self.softmax_scale)
+            return out
+        except ImportError:
+            # Fallback to SDPA if mps-flash-attn not available
+            return self.sdpa_attention(q, k, v)
+
     def run_attention(
         self,
         q: torch.Tensor,  # (total <= B * (N + L), num_heads, head_dim)
@@ -244,6 +255,8 @@ class AsymmetricAttention(nn.Module):
 
             if self.attention_mode == "sdpa":
                 out = self.sdpa_attention(q, k, v)  # (B, local_heads, seq_len, head_dim)
+            elif self.attention_mode == "mps_flash":
+                out = self.mps_flash_attention(q, k, v)  # (B, local_heads, seq_len, head_dim)
             elif self.attention_mode == "sage":
                 out = self.sage_attention(q, k, v)  # (B, local_heads, seq_len, head_dim)
             else:
@@ -509,11 +522,25 @@ class FinalLayer(nn.Module):
         self.linear = nn.Linear(hidden_size, patch_size * patch_size * out_channels, device=device)
 
     def forward(self, x, c):
+        # MPS requires input dtype to match weight dtype
+        # mod/linear are float32, input may be bf16/fp16
+        input_dtype = x.dtype
+        weight_dtype = self.mod.weight.dtype
+
         c = F.silu(c)
+        if c.dtype != weight_dtype:
+            c = c.to(weight_dtype)
         shift, scale = self.mod(c).chunk(2, dim=1)
-        x = modulate(self.norm_final(x), shift, scale)
+
+        x_norm = self.norm_final(x)
+        if x_norm.dtype != weight_dtype:
+            x_norm = x_norm.to(weight_dtype)
+        if shift.dtype != x_norm.dtype:
+            shift = shift.to(x_norm.dtype)
+            scale = scale.to(x_norm.dtype)
+        x = modulate(x_norm, shift, scale)
         x = self.linear(x)
-        return x
+        return x.to(input_dtype)
 
 
 class AsymmDiTJoint(nn.Module):
@@ -611,7 +638,13 @@ class AsymmDiTJoint(nn.Module):
         Returns:
             x: (B, C=3072, N) tensor of visual tokens with positional embedding.
         """
-        return self.x_embedder(x)  # Convert BcTHW to BCN
+        # Conv2d is float32, input may be bf16/fp16 - cast to match, then cast back
+        input_dtype = x.dtype
+        conv_dtype = self.x_embedder.proj.weight.dtype
+        if x.dtype != conv_dtype:
+            x = x.to(conv_dtype)
+        x = self.x_embedder(x)  # Convert BcTHW to BCN
+        return x.to(input_dtype)
 
     @torch.compile(disable=not COMPILE_MMDIT_BLOCK)
     def prepare(

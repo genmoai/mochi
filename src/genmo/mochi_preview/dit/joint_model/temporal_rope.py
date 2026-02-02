@@ -19,16 +19,17 @@ def apply_rotary_emb_qk_real(
     Returns:
         torch.Tensor: The input tensor with rotary embeddings applied.
     """
-    assert xqk.dtype == torch.bfloat16
-    # Split the last dimension into even and odd parts
-    xqk_even = xqk[..., 0::2]
-    xqk_odd = xqk[..., 1::2]
+    # Do RoPE math in float32 like Diffusers does (bf16 loses precision on MPS)
+    orig_dtype = xqk.dtype
+    xqk_even = xqk[..., 0::2].float()
+    xqk_odd = xqk[..., 1::2].float()
+    freqs_cos = freqs_cos.float()
+    freqs_sin = freqs_sin.float()
 
-    # Apply rotation
-    cos_part = (xqk_even * freqs_cos - xqk_odd * freqs_sin).type_as(xqk)
-    sin_part = (xqk_even * freqs_sin + xqk_odd * freqs_cos).type_as(xqk)
+    # Apply rotation in float32
+    cos_part = xqk_even * freqs_cos - xqk_odd * freqs_sin
+    sin_part = xqk_even * freqs_sin + xqk_odd * freqs_cos
 
-    # Interleave the results back into the original shape
-    out = torch.stack([cos_part, sin_part], dim=-1).flatten(-2)
-    assert out.dtype == torch.bfloat16
+    # Interleave and cast back to original dtype
+    out = torch.stack([cos_part, sin_part], dim=-1).flatten(-2).to(orig_dtype)
     return out

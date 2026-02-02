@@ -4,7 +4,10 @@ import tempfile
 import time
 
 import numpy as np
-from moviepy.editor import ImageSequenceClip
+try:
+    from moviepy.editor import ImageSequenceClip  # moviepy 1.x
+except ImportError:
+    from moviepy import ImageSequenceClip  # moviepy 2.x
 from PIL import Image
 
 from genmo.lib.progress import get_new_progress_bar
@@ -46,6 +49,27 @@ def save_video(final_frames, output_path, fps=30):
     assert final_frames.ndim == 4 and final_frames.shape[3] == 3, f"invalid shape: {final_frames} (need t h w c)"
     if final_frames.dtype != np.uint8:
         final_frames = (final_frames * 255).astype(np.uint8)
+
+    # Fast path: use ffmpeg directly if available
+    try:
+        import shutil
+        if shutil.which('ffmpeg'):
+            with tempfile.TemporaryDirectory() as tmpdir:
+                # Save frames as images
+                for i, frame in enumerate(final_frames):
+                    Image.fromarray(frame).save(os.path.join(tmpdir, f'{i:04d}.png'))
+                # Encode with ffmpeg
+                subprocess.run([
+                    'ffmpeg', '-y', '-framerate', str(fps),
+                    '-i', os.path.join(tmpdir, '%04d.png'),
+                    '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
+                    '-crf', '18', output_path
+                ], capture_output=True)
+            return
+    except Exception:
+        pass
+
+    # Fallback: moviepy
     ImageSequenceClip(list(final_frames), fps=fps).write_videofile(output_path)
 
 
