@@ -1015,7 +1015,16 @@ def decode_latents(decoder, z):
     assert z.ndim == 5
     cp_rank, cp_size = cp.get_cp_rank_size()
     z = z.tensor_split(cp_size, dim=2)[cp_rank]  # split along temporal dim
-    with torch.autocast("cuda", dtype=torch.bfloat16):
+    device = z.device
+
+    if device.type == "cuda":
+        ctx = torch.autocast("cuda", dtype=torch.bfloat16)
+    elif device.type == "mps":
+        # MPS: use float32 - bfloat16 autocast causes corruption
+        ctx = torch.autocast("mps", dtype=torch.float32, enabled=False)
+    else:
+        ctx = torch.autocast("cpu", dtype=torch.float32, enabled=False)
+    with ctx:
         samples = decoder(z)
     samples = gather_all_frames(samples)
     return normalize_decoded_frames(samples)

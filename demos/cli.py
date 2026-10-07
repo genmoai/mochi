@@ -7,6 +7,14 @@ import click
 import numpy as np
 import torch
 
+try:
+    from mps_conv3d import patch_conv3d, is_available as conv3d_available
+    if conv3d_available():
+        patch_conv3d()
+        print("✓ MPS Conv3D patched")
+except ImportError:
+    pass
+
 from genmo.lib.progress import progress_bar
 from genmo.lib.utils import save_video
 from genmo.mochi_preview.pipelines import (
@@ -15,35 +23,65 @@ from genmo.mochi_preview.pipelines import (
     MochiMultiGPUPipeline,
     MochiSingleGPUPipeline,
     T5ModelFactory,
+    get_device,
     linear_quadratic_schedule,
 )
 
 pipeline = None
 model_dir_path = None
 lora_path = None
-num_gpus = torch.cuda.device_count()
+quantize_nf4 = False
+attention_mode = None
+# Check for available GPUs - works with CUDA, falls back to MPS/CPU
+if torch.cuda.is_available():
+    num_gpus = torch.cuda.device_count()
+elif torch.backends.mps.is_available():
+    num_gpus = 1  # MPS is single-device
+    print("Using MPS (Apple Silicon)")
+else:
+    num_gpus = 0  # CPU mode
+    print("No GPU detected, using CPU")
 cpu_offload = False
 
 
-def configure_model(model_dir_path_, lora_path_, cpu_offload_, fast_model_=False):
-    global model_dir_path, lora_path, cpu_offload
+def configure_model(model_dir_path_, lora_path_, cpu_offload_, quantize_nf4_=False, attention_mode_=None):
+    global model_dir_path, lora_path, cpu_offload, quantize_nf4, attention_mode
     model_dir_path = model_dir_path_
     lora_path = lora_path_
     cpu_offload = cpu_offload_
+    quantize_nf4 = quantize_nf4_
+    attention_mode = attention_mode_
 
 
 def load_model():
-    global num_gpus, pipeline, model_dir_path, lora_path
+    global num_gpus, pipeline, model_dir_path, lora_path, quantize_nf4, attention_mode
     if pipeline is None:
         MOCHI_DIR = model_dir_path
-        print(f"Launching with {num_gpus} GPUs. If you want to force single GPU mode use CUDA_VISIBLE_DEVICES=0.")
-        klass = MochiSingleGPUPipeline if num_gpus == 1 else MochiMultiGPUPipeline
+        device = get_device()
+        if device.type == "cuda":
+            print(f"Launching with {num_gpus} GPUs. If you want to force single GPU mode use CUDA_VISIBLE_DEVICES=0.")
+        elif device.type == "mps":
+            print("Launching on MPS (Apple Silicon)")
+            if quantize_nf4:
+                print("NF4 quantization enabled (~5GB model size)")
+        else:
+            print("Launching on CPU")
+        # Multi-GPU only supported on CUDA
+        klass = MochiSingleGPUPipeline if (num_gpus <= 1 or device.type != "cuda") else MochiMultiGPUPipeline
+        # Check for local T5 weights, else use HuggingFace
+        t5_local = f"{MOCHI_DIR}/../t5"
+        t5_path = t5_local if os.path.exists(t5_local) else None
+        if t5_path:
+            print(f"Using local T5: {t5_path}")
+
         kwargs = dict(
-            text_encoder_factory=T5ModelFactory(),
+            text_encoder_factory=T5ModelFactory(model_dir=t5_path),
             dit_factory=DitModelFactory(
                 model_path=f"{MOCHI_DIR}/dit.safetensors",
                 lora_path=lora_path,
                 model_dtype="bf16",
+                quantize_nf4=quantize_nf4,
+                attention_mode=attention_mode,
             ),
             decoder_factory=DecoderModelFactory(
                 model_path=f"{MOCHI_DIR}/decoder.safetensors",
@@ -93,8 +131,7 @@ def generate_video(
         "sigma_schedule": sigma_schedule,
         "cfg_schedule": cfg_schedule,
         "num_inference_steps": num_inference_steps,
-        # We *need* flash attention to batch cfg
-        # and it's only worth doing in a high-memory regime (assume multiple GPUs)
+        # Batched CFG requires flash attention (B=2 not supported by SDPA path)
         "batch_cfg": False,
         "prompt": prompt,
         "negative_prompt": negative_prompt,
@@ -145,14 +182,16 @@ inviting atmosphere.
 @click.option("--model_dir", required=True, help="Path to the model directory.")
 @click.option("--lora_path", required=False, help="Path to the lora file.")
 @click.option("--cpu_offload", is_flag=True, help="Whether to offload model to CPU")
+@click.option("--quantize", is_flag=True, help="Use NF4 quantization (4-bit) for MPS - reduces memory from ~20GB to ~5GB")
+@click.option("--attention-mode", type=click.Choice(["flash", "mps_flash", "sdpa", "sage"]), default=None, help="Attention mode (auto-detected if not specified)")
 @click.option("--out_dir", default="outputs", help="Output directory for generated videos")
 @click.option("--threshold-noise", default=0.025, help="threshold noise")
 @click.option("--linear-steps", default=None, type=int, help="linear steps")
 def generate_cli(
-    prompt, sweep_file, negative_prompt, width, height, num_frames, seed, cfg_scale, num_steps, 
-    model_dir, lora_path, cpu_offload, out_dir, threshold_noise, linear_steps
+    prompt, sweep_file, negative_prompt, width, height, num_frames, seed, cfg_scale, num_steps,
+    model_dir, lora_path, cpu_offload, quantize, attention_mode, out_dir, threshold_noise, linear_steps
 ):
-    configure_model(model_dir, lora_path, cpu_offload)
+    configure_model(model_dir, lora_path, cpu_offload, quantize, attention_mode)
 
     if sweep_file:
         with open(sweep_file, 'r') as f:
