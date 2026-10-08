@@ -703,6 +703,8 @@ def apply_tiled(
     assert H % min_block_size == 0
     assert W % min_block_size == 0
     ov = overlap // 2
+    # Each side extends by ov, so odd overlaps are rounded down for both
+    # slicing and blending.
     assert ov % min_block_size == 0
 
     if num_tiles_w >= 2:
@@ -719,7 +721,7 @@ def apply_tiled(
 
         # If `fn` changed the resolution, adjust the overlap.
         resample_factor = left.size(-1) / (half_W + ov)
-        out_overlap = int(overlap * resample_factor)
+        out_overlap = int(2 * ov * resample_factor)
 
         return blend_horizontal(left, right, out_overlap)
 
@@ -737,7 +739,7 @@ def apply_tiled(
 
         # If `fn` changed the resolution, adjust the overlap.
         resample_factor = top.size(-2) / (half_H + ov)
-        out_overlap = int(overlap * resample_factor)
+        out_overlap = int(2 * ov * resample_factor)
 
         return blend_vertical(top, bottom, out_overlap)
 
