@@ -1,14 +1,16 @@
+# Use uv sync --locked; the project Pillow override is required.
 addict>=2.4.0
-av==13.1.0
+av>=18.1.0
 click>=8.1.7
 einops>=0.8.0
-gradio>=3.36.1
-moviepy==1.0.3
+gradio>=6.30.0,<7
+moviepy>=2.2.1,<3
 omegaconf>=2.3.0
-pillow==9.5.0
+pillow>=13.0.0,<14
 pyyaml>=6.0.2
-ray>=2.37.0
-sentencepiece>=0.2.0
+ray>=2.59.0
+sentencepiece>=0.2.2
 setuptools>=75.2.0
-torch>=2.4.1
-transformers>=4.45.2
+torch>=2.14.1
+torchvision>=0.19.1
+transformers==5.20.2

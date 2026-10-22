@@ -22,16 +22,19 @@ Install using [uv](https://github.com/astral-sh/uv):
 git clone https://github.com/genmoai/mochi
 cd mochi
 pip install uv
-uv venv .venv
+uv venv --python 3.11 .venv
 source .venv/bin/activate
-uv pip install setuptools
-uv pip install -e . --no-build-isolation
+uv sync --locked
 ```
 
 If you want to install flash attention, you can use:
 ```
-uv pip install -e .[flash] --no-build-isolation
+uv sync --locked --extra flash --no-build-isolation
 ```
+
+Python 3.11 or newer is required. Use the uv project install above: it applies the Pillow 13 override for MoviePy and Gradio. A plain `pip install -r requirements.txt` does not apply that override.
+
+This security refresh validates CPU media helpers and dependency resolution. GPU inference and fine-tuning need qualification before deployment.
 
 You will also need to install [FFMPEG](https://www.ffmpeg.org/) to turn your outputs into videos.
 

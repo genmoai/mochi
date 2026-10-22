@@ -3,7 +3,7 @@ from pathlib import Path
 import shutil
 
 import click
-from moviepy.editor import VideoFileClip
+from moviepy import VideoFileClip
 from tqdm import tqdm
 
 
@@ -51,7 +51,7 @@ def truncate_videos(folder, output_folder, duration, resolution):
                 continue
 
             # First truncate duration
-            truncated = video.subclip(0, duration)
+            truncated = video.subclipped(0, duration)
 
             # Calculate crop dimensions to maintain aspect ratio
             target_ratio = target_width / target_height
@@ -61,12 +61,12 @@ def truncate_videos(folder, output_folder, duration, resolution):
                 # Video is wider than target ratio - crop width
                 new_width = int(truncated.h * target_ratio)
                 x1 = (truncated.w - new_width) // 2
-                final = truncated.crop(x1=x1, width=new_width).resize((target_width, target_height))
+                final = truncated.cropped(x1=x1, width=new_width).resized((target_width, target_height))
             else:
                 # Video is taller than target ratio - crop height
                 new_height = int(truncated.w / target_ratio)
                 y1 = (truncated.h - new_height) // 2
-                final = truncated.crop(y1=y1, height=new_height).resize((target_width, target_height))
+                final = truncated.cropped(y1=y1, height=new_height).resized((target_width, target_height))
 
             # Set output parameters for consistent MP4 encoding
             output_params = {
@@ -77,7 +77,7 @@ def truncate_videos(folder, output_folder, duration, resolution):
             }
 
             # Set FPS to 30
-            final = final.set_fps(30)
+            final = final.with_fps(30)
 
             # Check for a corresponding .txt file
             txt_file_path = file_path.with_suffix('.txt')
