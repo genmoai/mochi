@@ -1,0 +1,21 @@
+name: Dependency compatibility
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  cpu-compatibility:
+    runs-on: ubuntu-latest
+    env:
+      GRADIO_ANALYTICS_ENABLED: 'False'
+      HF_HUB_OFFLINE: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.11'
+      - run: uv lock --check
+      - run: uv sync --locked
+      - run: uv run --locked python -m unittest discover -s tests -p test_security_compatibility.py

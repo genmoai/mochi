@@ -4,8 +4,7 @@ import tempfile
 import time
 
 import numpy as np
-from moviepy.editor import ImageSequenceClip
-from PIL import Image
+from moviepy import ImageSequenceClip
 
 from genmo.lib.progress import get_new_progress_bar
 
