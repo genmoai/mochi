@@ -518,15 +518,16 @@ class MochiSingleGPUPipeline:
         decode_type: str = "full",
         decode_args: Optional[Dict[str, Any]] = None,
         fast_init=True,
-        strict_load=True
+        strict_load=True,
+        device_id=0,
     ):
-        self.device = torch.device("cuda:0")
+        self.device = torch.device(f"cuda:{device_id}")
         self.tokenizer = t5_tokenizer(text_encoder_factory.model_dir)
         t = Timer()
         self.cpu_offload = cpu_offload
         self.decode_args = decode_args or {}
         self.decode_type = decode_type
-        init_id = "cpu" if cpu_offload else 0
+        init_id = "cpu" if cpu_offload else device_id
         with t("load_text_encoder"):
             self.text_encoder = text_encoder_factory.get_model(
                 local_rank=0,
