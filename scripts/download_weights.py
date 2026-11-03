@@ -50,7 +50,7 @@ def download_weights(output_dir, fast_model, hf_transfer):
                 # copy instead of mv to avoid destroying huggingface cache
                 shutil.copy2(out_path, local_file_path)
             else:
-                with tempfile.TemporaryDirectory() as tmp_dir:
+                with tempfile.TemporaryDirectory(dir=output_dir) as tmp_dir:
                     snapshot_download(
                         repo_id=repo_id,
                         allow_patterns=[f"*{remote_path}*"],
