@@ -2,6 +2,7 @@
 import json
 import os
 import time
+from uuid import uuid4
 
 import click
 import numpy as np
@@ -110,11 +111,12 @@ def generate_video(
         assert final_frames.dtype == np.float32
 
         os.makedirs(output_dir, exist_ok=True)
-        output_path = os.path.join(output_dir, f"output_{int(time.time())}.mp4")
+        output_path = os.path.join(output_dir, f"output_{int(time.time())}_{uuid4().hex}.mp4")
 
         save_video(final_frames, output_path)
         json_path = os.path.splitext(output_path)[0] + ".json"
-        json.dump(args, open(json_path, "w"), indent=4)
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(args, f, indent=4)
 
         return output_path
 
